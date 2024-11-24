@@ -133,6 +133,20 @@ class KoboldWebSocketClient:
     else:
       _LOGGER.debug("cleaning_state without body")
 
+  async def update_cleaning_state(self, cleaning_state_response: CleaningStateResponse):
+    """Actualiza la entidad con información detallada de la limpieza."""
+    # Por ejemplo, puedes actualizar atributos personalizados
+    #cleaning_body = cleaning_state_response.body
+    # Supongamos que quieres actualizar el área limpiada
+    #total_area = sum(run.stats.area for run in cleaning_body.runs)
+    #self.entity._attr_cleaned_area = total_area
+
+    # Otros atributos pueden ser actualizados aquí
+
+    # Confirmar los cambios
+    #self.entity.async_write_ha_state()
+    #_LOGGER.debug("Entity cleaning progress updated. Cleaned area: %s", total_area)
+
 
   def _parse_response_body(self, body: Dict) -> ResponseBody:
     autonomy_states = AutonomyStates(**body["autonomy_states"])
@@ -192,6 +206,8 @@ class KoboldWebSocketClient:
     """Actualiza el estado de la entidad basado en los datos de ResponseBody."""
     action = response_body.action
     state = response_body.state
+    available_commands = response_body.available_commands
+
 
     if state == "busy" and action == "cleaning":
       ha_state = STATE_CLEANING
@@ -208,6 +224,18 @@ class KoboldWebSocketClient:
     self.entity._attr_state = ha_state
     self.entity._attr_battery_level = response_body.details.charge
     self.entity._attr_status = action
+
+    # Guardar estado de la bolsa
+    if response_body.cleaning_center and response_body.cleaning_center.bag_status:
+      self.entity._attr_bag_status = response_body.cleaning_center.bag_status
+
+    # Guardar available_commands si no es None
+    if available_commands is not None:
+      self.entity._attr_available_commands = available_commands
+      _LOGGER.debug("Available commands updated: %s", available_commands)
+
+    # Determinar si el robot está cargando
+    self.entity._is_charging = response_body.details.is_charging
 
     # Confirmar los cambios de estado a Home Assistant
     self.entity.async_write_ha_state()

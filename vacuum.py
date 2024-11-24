@@ -1,4 +1,5 @@
 import logging
+from homeassistant.helpers.icon import icon_for_battery_level
 from homeassistant.components.vacuum import (
   StateVacuumEntity,
   VacuumEntityFeature,
@@ -95,25 +96,61 @@ class KoboldVacuumEntity(StateVacuumEntity):
   @property
   def status(self):
     """Devuelve el estado detallado de la aspiradora."""
+    if self._attr_state == STATE_CLEANING and self.available_commands.pause:
+      return "Pausar"
+    elif self._attr_state == STATE_PAUSED and self.available_commands.return_to_base:
+      return "Enviar a la Base"
     return self._attr_status
+
+  @property
+  def icon(self):
+    """Define el icono predeterminado de la aspiradora."""
+    return "mdi:robot-vacuum-variant"
+
+  @property
+  def available_commands(self):
+    """Devuelve los comandos disponibles para el robot."""
+    return getattr(self, "_attr_available_commands", None)
+
+  @property
+  def bag_status(self):
+    """Devuelve el estado de la bolsa de la aspiradora."""
+    return getattr(self, "_attr_bag_status", None)
+
+  @property
+  def battery_icon(self):
+    """Devuelve el icono de la batería según el estado de carga."""
+    if self._attr_battery_level is not None:
+      # Si el robot está cargando, usar un icono diferente
+      if getattr(self, "_is_charging", False):  # Esto debe derivarse de los datos WebSocket
+        return "mdi:battery-charging"
+      # De lo contrario, usar el icono predeterminado basado en el nivel de batería
+      return icon_for_battery_level(self._attr_battery_level)
+    return "mdi:battery-unknown"
+
 
   async def async_start(self):
     """Inicia o reanuda la limpieza."""
-    await self._robots_service.start_cleaning(self._id_token, self._robot.id, self.default_map)
-    #self._state = STATE_CLEANING
-    #self.async_write_ha_state()
+    if self.available_commands and (self.available_commands.start or self.available_commands.resume):
+      await self._robots_service.start_cleaning(
+          self._id_token, self._robot.id, self.default_map
+      )
+    else:
+      _LOGGER.warning("Start command is not available for the robot.")
 
   async def async_pause(self):
     """Pausa la limpieza."""
-    await self._robots_service.pause_cleaning(self._id_token, self._robot.serial)
-    #self._state = STATE_PAUSED
-    #self.async_write_ha_state()
+    if self.available_commands and self.available_commands.pause:
+      await self._robots_service.pause_cleaning(self._id_token, self._robot.serial)
+    else:
+      _LOGGER.warning("Pause command is not available for the robot.")
 
   async def async_return_to_base(self, **kwargs):
     """Envía la aspiradora a la base."""
-    await self._robots_service.send_to_base(self._id_token, self._robot.serial)
-    #self._state = STATE_RETURNING
-    #self.async_write_ha_state()
+    if self.available_commands and self.available_commands.return_to_base:
+      await self._robots_service.send_to_base(self._id_token, self._robot.serial)
+    else:
+      _LOGGER.warning("Return to base command is not available for the robot.")
 
 async def async_update(self):
   """Actualiza el estado de la aspiradora."""
