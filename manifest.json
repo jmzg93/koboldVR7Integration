@@ -1,0 +1,12 @@
+{
+  "domain": "KoboldIntegration",
+  "name": "Kobold Vacuum",
+  "version": "1.0.0",
+  "documentation": "https://www.example.com",
+  "dependencies": [],
+  "codeowners": ["@jmzg93"],
+  "requirements": ["aiohttp", "websockets"],
+  "iot_class": "cloud_push",
+  "platforms": ["vacuum"],
+  "config_flow": true
+}
