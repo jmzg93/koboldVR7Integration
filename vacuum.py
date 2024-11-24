@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from homeassistant.helpers.icon import icon_for_battery_level
 from homeassistant.components.vacuum import (
@@ -10,6 +11,11 @@ from homeassistant.components.vacuum import (
   STATE_RETURNING,
 )
 
+import voluptuous as vol
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_platform
+
+from .service.model.map_with_zones import MapWithZones
 from .service.websocket_service import WebSocketService
 from .const import DOMAIN, CONF_EMAIL, CONF_ID_TOKEN
 from .service.robot_service import RobotsService
@@ -17,6 +23,18 @@ from .api.robots_api_client import RobotsApiClient
 from .api.websocket_client import KoboldWebSocketClient
 
 _LOGGER = logging.getLogger(__name__)
+
+
+SERVICE_CLEAN_ZONE = 'clean_zone'
+SERVICE_CLEAN_MAP = 'clean_map'
+
+CLEAN_ZONE_SCHEMA = vol.Schema({
+  vol.Required('zone_uuid'): cv.string,
+})
+
+CLEAN_MAP_SCHEMA = vol.Schema({
+  vol.Required('map_uuid'): cv.string,
+})
 
 async def async_setup_entry(hass, entry, async_add_entities):
   """Configura la entidad de aspiradora basada en una entrada de configuración."""
@@ -34,18 +52,46 @@ async def async_setup_entry(hass, entry, async_add_entities):
   robots = await robots_service.get_all_robots(id_token)
 
   entities = []
+  map_with_zones_list = []  # Lista para almacenar MapWithZones
+
   for robot in robots:
-    map = await robots_service.get_robot_map(id_token, robot.id)
-    entities.append(KoboldVacuumEntity(hass, robot, robots_service, id_token, map))
+    maps = await robots_service.get_robot_map(id_token, robot.id)
+    if not maps:
+      _LOGGER.warning(f"No maps found for robot {robot.id}")
+      continue  # Si no hay mapas, pasa al siguiente robot
+
+    for robot_map in maps:
+      # Obtener las zonas para cada mapa
+      zones = await robots_service.get_zones_by_floor_plan(id_token, robot_map.floorplan_uuid)
+      # Crear el objeto MapWithZones y agregarlo a la lista
+      map_with_zones = MapWithZones(map=robot_map, zones=zones)
+      map_with_zones_list.append(map_with_zones)
+
+    entities.append(KoboldVacuumEntity(hass, robot, robots_service, id_token, map_with_zones_list))
 
   async_add_entities(entities, update_before_add=True)
+
+  # Registrar servicios personalizados
+  platform = entity_platform.async_get_current_platform()
+
+  platform.async_register_entity_service(
+      SERVICE_CLEAN_ZONE,
+      CLEAN_ZONE_SCHEMA,
+      'async_clean_zone'
+  )
+
+  platform.async_register_entity_service(
+      SERVICE_CLEAN_MAP,
+      CLEAN_MAP_SCHEMA,
+      'async_clean_map'
+  )
 
 class KoboldVacuumEntity(StateVacuumEntity):
   """Representa una aspiradora Kobold."""
 
-  def __init__(self, hass, robot, robots_service, id_token, default_map):
+  def __init__(self, hass, robot, robots_service, id_token, map_with_zones_list):
     self.hass = hass
-    self.default_map = default_map
+    self.map_with_zones_list = map_with_zones_list  # Almacena los mapas y zonas del robot
     self._robot = robot
     self._robots_service = robots_service
     self._id_token = id_token
@@ -128,13 +174,37 @@ class KoboldVacuumEntity(StateVacuumEntity):
       return icon_for_battery_level(self._attr_battery_level)
     return "mdi:battery-unknown"
 
+  @property
+  def extra_state_attributes(self):
+    """Devuelve los atributos de estado adicionales de la aspiradora."""
+    attributes = {}
+    # Agregar información de mapas y zonas
+    if self.map_with_zones_list:
+      attributes['maps'] = [map_with_zones.map.floorplan_uuid for map_with_zones in self.map_with_zones_list]
+      attributes['zones'] = {
+        map_with_zones.map.floorplan_uuid: [
+          {'zone_uuid': zone.track_uuid, 'name': zone.name}
+          for zone in map_with_zones.zones
+        ] for map_with_zones in self.map_with_zones_list
+      }
+    return attributes
+
 
   async def async_start(self):
     """Inicia o reanuda la limpieza."""
-    if self.available_commands and (self.available_commands.start or self.available_commands.resume):
-      await self._robots_service.start_cleaning(
-          self._id_token, self._robot.id, self.default_map
-      )
+    if self.available_commands:
+      if self.available_commands.start:
+        # Usa el primer mapa como el mapa por defecto para la entidad del robot
+        """TODO implementar la selección de mapa y de zonas"""
+        default_map = self.map_with_zones_list[0] if self.map_with_zones_list else None
+        await self._robots_service.start_cleaning(
+            #self._id_token, self._robot.id, default_map
+            self._id_token, self._robot.id, MapWithZones(map=default_map.map, zones=None)
+        )
+      elif self.available_commands.resume:
+        await self._robots_service.resume_cleaning(
+            self._id_token, self._robot.serial
+        )
     else:
       _LOGGER.warning("Start command is not available for the robot.")
 
@@ -147,10 +217,46 @@ class KoboldVacuumEntity(StateVacuumEntity):
 
   async def async_return_to_base(self, **kwargs):
     """Envía la aspiradora a la base."""
-    if self.available_commands and self.available_commands.return_to_base:
-      await self._robots_service.send_to_base(self._id_token, self._robot.serial)
+    if self.available_commands:
+      if self.available_commands.return_to_base:
+        await self._robots_service.send_to_base(self._id_token, self._robot.serial)
+      elif self.available_commands.pause:
+        await self._robots_service.pause_cleaning(self._id_token, self._robot.serial)
+        await asyncio.sleep(2)
+        await self._robots_service.send_to_base(self._id_token, self._robot.serial)
     else:
       _LOGGER.warning("Return to base command is not available for the robot.")
+
+  async def async_clean_zone(self, zone_uuid):
+    """Inicia la limpieza de una zona específica."""
+    if self.available_commands and self.available_commands.start:
+      # Buscar el mapa y la zona correspondiente al zone_uuid
+      for map_with_zones in self.map_with_zones_list:
+        for zone in map_with_zones.zones:
+          if zone.track_uuid == zone_uuid:
+            # Iniciar la limpieza usando el mapa y la zona
+            await self._robots_service.start_cleaning(
+                self._id_token, self._robot.id, map_with_zones.map, [zone]
+            )
+            return
+      _LOGGER.warning(f"Zone with UUID {zone_uuid} not found.")
+    else:
+      _LOGGER.warning("Start command is not available for the robot.")
+
+  async def async_clean_map(self, map_uuid):
+    """Inicia la limpieza de un mapa específico."""
+    if self.available_commands and self.available_commands.start:
+      # Buscar el mapa correspondiente al map_uuid
+      for map_with_zones in self.map_with_zones_list:
+        if map_with_zones.map.floorplan_uuid == map_uuid:
+          # Iniciar la limpieza usando el mapa (sin zonas específicas)
+          await self._robots_service.start_cleaning(
+              self._id_token, self._robot.id, map_with_zones.map, None
+          )
+          return
+      _LOGGER.warning(f"Map with UUID {map_uuid} not found.")
+    else:
+      _LOGGER.warning("Start command is not available for the robot.")
 
 async def async_update(self):
   """Actualiza el estado de la aspiradora."""

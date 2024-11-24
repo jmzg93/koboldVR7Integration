@@ -1,6 +1,7 @@
 import logging
-from typing import Optional
+from typing import Optional, List
 
+from ..api.model.robot_map_zones import CleaningTracksResponse
 from ..api.model.cleaning_start_request import RunSettings, MapDetails, Run
 from ..api.model.cleaning_start_request import CleaningStartRequest
 from ..api.model.robot_map_response import RobotMapResponse
@@ -46,32 +47,12 @@ class RobotsService:
         robot_id
     )
 
-  async def get_robot_map(self, token, robot_id) -> Optional[RobotMapResponse]:
-    """
-    Obtiene el primer mapa de la lista de mapas para el robot especificado.
-
-    Args:
-        token (str): Token de autenticación.
-        robot_id (str): ID del robot.
-
-    Returns:
-        Optional[RobotMapResponse]: El primer mapa del robot o None si no hay mapas disponibles.
-    """
-    try:
-      maps = await execute(
-          self.robots_api_client.get_robot_maps(robot_id),
-          "get robot map for robot %s",
-          robot_id
-      )
-      if maps:
-        # Verificar que la lista no esté vacía y devolver el primer elemento
-        return maps[0]
-      else:
-        # Retorna None si no hay mapas disponibles
-        return None
-    except Exception as e:
-      _LOGGER.error("Error retrieving robot maps for robot %s: %s", robot_id, e)
-      return None
+  async def get_robot_map(self, token, robot_id) -> Optional[List[RobotMapResponse]]:
+    return await execute(
+        self.robots_api_client.get_robot_maps(robot_id),
+        "get robot map for robot %s",
+        robot_id
+    )
 
   async def get_recent_cleaning_maps(self, token, robot_id):
     return await execute(
@@ -80,18 +61,24 @@ class RobotsService:
         robot_id
     )
 
-  async def get_zones_by_floor_plan(self, token, floorplan_uuid):
+  async def get_zones_by_floor_plan(self, token, floorplan_uuid)-> Optional[List[CleaningTracksResponse]]:
     return await execute(
         self.robots_api_client.get_zones_by_floor_plan(floorplan_uuid),
         "get zones by floorplan %s",
         floorplan_uuid
     )
 
-  async def start_cleaning(self, token, robot_id, default_map):
+  async def start_cleaning(self, token, robot_id, map_with_zone):
     global floor_plan_uuid
-    if default_map is not None:
+    global zones_uuid
+    if map_with_zone is not None:
       # Extraemos el floorplan_uuid del default_map
-      floor_plan_uuid = default_map.floorplan_uuid if default_map else None
+      floor_plan_uuid = map_with_zone.map.floorplan_uuid if map_with_zone.map and map_with_zone.map.floorplan_uuid else None
+      if map_with_zone.zones is not None and isinstance(map_with_zone.zones, list):
+        # Si hay zonas, recopilamos sus UUIDs en una lista
+        zones_uuid = [zone.track_uuid for zone in map_with_zone.zones if hasattr(zone, 'track_uuid')]
+      else:
+        zones_uuid = None  # Si no hay zonas o no es una lista, dejamos la lista vacía
 
 
     cleaning_request = CleaningStartRequest(
@@ -100,7 +87,7 @@ class RobotsService:
               settings=RunSettings(mode="auto", navigation_mode="normal"),
               map=MapDetails(
                   floorplan_uuid=floor_plan_uuid,
-                  zone_uuid=None,
+                  zone_uuid=zones_uuid,
                   nogo_enabled=True
               )
           )

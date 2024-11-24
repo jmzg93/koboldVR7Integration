@@ -1,6 +1,8 @@
 import logging
 from typing import List, Dict, Any, Optional
 import aiohttp
+
+from .model.robot_map_zones import CleaningTracksResponse
 from .model.robot_response import RobotResponse
 from .model.cleaning_modes_response import CleaningModesResponse
 from .model.robot_map_response import RobotMapResponse
@@ -34,10 +36,10 @@ class RobotsApiClient:
     response = await self._make_request("GET", url)
     return response
 
-  async def get_zones_by_floor_plan(self, floorplan_uuid: str) -> List[Dict[str, Any]]:
+  async def get_zones_by_floor_plan(self, floorplan_uuid: str) -> List[CleaningTracksResponse]:
     url = f"{self._host}/maps/floorplans/{floorplan_uuid}/tracks"
     response = await self._make_request("GET", url)
-    return response
+    return [CleaningTracksResponse(**zone) for zone in response]
 
   async def start_cleaning(self, robot_id: str, cleaning_request: CleaningStartRequest) -> str:
     url = f"{self._host}/robots/{robot_id}/cleaning/v2"
