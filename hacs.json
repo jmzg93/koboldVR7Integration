@@ -1,0 +1,7 @@
+{
+  "name": "Kobold Integration",
+  "content_in_root": false,
+  "domains": ["kobold_vr7"],
+  "homeassistant": "2024.11.2",
+  "render_readme": true
+}

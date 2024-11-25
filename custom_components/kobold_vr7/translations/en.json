@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect with Kobold",
+        "description": "Enter your email to receive the OTP code.",
+        "data": {
+          "email": "Email"
+        }
+      },
+      "otp": {
+        "title": "Enter OTP Code",
+        "description": "Enter the OTP code you received in your email.",
+        "data": {
+          "otp": "OTP Code"
+        }
+      }
+    },
+    "error": {
+      "cannot_send_otp": "Failed to send the OTP code. Please check your email and try again.",
+      "invalid_otp": "Invalid OTP code. Please try again."
+    },
+    "abort": {
+      "already_configured": "This email is already configured."
+    }
+  }
+}

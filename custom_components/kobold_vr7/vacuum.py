@@ -104,6 +104,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         | VacuumEntityFeature.STATE
         | VacuumEntityFeature.BATTERY
         | VacuumEntityFeature.STATUS
+        | VacuumEntityFeature.STOP
         #| VacuumEntityFeature.CLEAN_SPOT
         | VacuumEntityFeature.FAN_SPEED
         | VacuumEntityFeature.LOCATE
@@ -229,6 +230,13 @@ class KoboldVacuumEntity(StateVacuumEntity):
 
   async def async_set_fan_speed(self, fan_speed: str):
     self._attr_fan_speed = fan_speed
+
+  async def async_stop(self):
+    """Detiene la limpieza."""
+    if self.available_commands and self.available_commands.pause:
+      await self._robots_service.pause_cleaning(self._id_token, self._robot.serial)
+    else:
+      _LOGGER.warning("Pause command is not available for the robot.")
 
   async def async_pause(self):
     """Pausa la limpieza."""

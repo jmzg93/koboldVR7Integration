@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/KoboldIntegration.iml" filepath="$PROJECT_DIR$/KoboldIntegration.iml" />
+      <module fileurl="file://$PROJECT_DIR$/koboldintegration.iml" filepath="$PROJECT_DIR$/koboldintegration.iml" />
     </modules>
   </component>
 </project>

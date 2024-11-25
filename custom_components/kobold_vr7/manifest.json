@@ -1,8 +1,8 @@
 {
-  "domain": "KoboldIntegration",
+  "domain": "kobold_vr7",
   "name": "Kobold Vacuum",
   "version": "1.0.0",
-  "documentation": "https://www.example.com",
+  "documentation": "https://github.com/jmzg93/koboldHAIntegration",
   "dependencies": [],
   "codeowners": ["@jmzg93"],
   "requirements": ["aiohttp", "websockets"],
