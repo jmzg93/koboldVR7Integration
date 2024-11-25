@@ -1,5 +1,3 @@
-Aquí tienes el README actualizado sin la sección que mencionabas:
-
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20My%20Work-orange)](https://buymeacoffee.com/jmzg93)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue)](https://www.paypal.com/donate?business=j_manuel_za@hotmail.com)
 
