@@ -1,7 +1,7 @@
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
-from .const import DOMAIN, CONF_EMAIL, CONF_OTP, CONF_ID_TOKEN
+from .const import DOMAIN, CONF_EMAIL, CONF_OTP, CONF_ID_TOKEN, AUTH_HOST
 from .service.user_data_service import UserDataService
 from .api.user_api_client import UserApiClient
 import logging
@@ -32,7 +32,7 @@ class KoboldConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         session = self.hass.helpers.aiohttp_client.async_get_clientsession()
         user_api_client = UserApiClient(
             session,
-            host="https://mykobold.eu.auth0.com",
+            host=AUTH_HOST,
             path_send_otp="/passwordless/start",
             path_validate_otp="/oauth/token"
         )

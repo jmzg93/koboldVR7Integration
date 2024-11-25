@@ -21,6 +21,7 @@ from .const import DOMAIN, CONF_EMAIL, CONF_ID_TOKEN
 from .service.robot_service import RobotsService
 from .api.robots_api_client import RobotsApiClient
 from .api.websocket_client import KoboldWebSocketClient
+from .const import ORBITAL_HOST
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
   session = hass.helpers.aiohttp_client.async_get_clientsession()
   robots_api_client = RobotsApiClient(
-      session, token=id_token, host="https://orbital.ksecosys.com"
+      session, token=id_token, host=ORBITAL_HOST
   )
   robots_service = RobotsService(robots_api_client)
 
