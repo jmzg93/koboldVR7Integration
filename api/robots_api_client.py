@@ -2,6 +2,8 @@ import logging
 from typing import List, Dict, Any, Optional
 import aiohttp
 
+from .model.register_device_request import RegisterDeviceRequest
+from .model.register_device_response import RegisterDeviceResponse
 from .model.robot_map_zones import CleaningTracksResponse
 from .model.robot_response import RobotResponse
 from .model.cleaning_modes_response import CleaningModesResponse
@@ -15,6 +17,13 @@ class RobotsApiClient:
     self._token = token
     self._host = host
     self._logger = logging.getLogger(__name__)
+
+
+  async def register_device(self) -> RegisterDeviceResponse:
+    url = f"{self._host}/mobile_devices"
+    payload = RegisterDeviceRequest().to_dict()
+    response = await self._make_request("POST", url, json=payload)
+    return RegisterDeviceResponse(**response)
 
   async def get_user_robots(self) -> List[RobotResponse]:
     url = f"{self._host}/users/me/robots"
@@ -66,11 +75,16 @@ class RobotsApiClient:
   async def resume_clean(self, serial_robot_id: str) -> str:
     return await self._send_message_to_robot(serial_robot_id, "cleaning.resume")
 
+  async def find_me(self, serial_robot_id: str) -> str:
+    return await self._send_message_to_robot(serial_robot_id, "utilities.find_me")
+
   async def _send_message_to_robot(self, robot_id: str, ability: str) -> Any:
     url = f"{self._host}/vendors/3/robots/{robot_id}/messages"
     payload = {"ability": ability}
     response = await self._make_request("POST", url, json=payload)
     return response
+
+
 
   async def _make_request(
       self,

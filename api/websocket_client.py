@@ -18,9 +18,64 @@ from homeassistant.components.vacuum import (
   STATE_IDLE,
   STATE_PAUSED,
   STATE_RETURNING,
+  STATE_ERROR,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_response_body(body: Dict) -> ResponseBody:
+  autonomy_states = AutonomyStates(**body["autonomy_states"])
+  available_commands = AvailableCommands(**body["available_commands"])
+  cleaning_center = CleaningCenter(**body["cleaning_center"])
+  details = Details(**body["details"])
+  errors = None
+  if body.get("errors"):
+    errors = [Error(**error) for error in body["errors"]]
+
+  response_body = ResponseBody(
+      action=body["action"],
+      autonomy_states=autonomy_states,
+      available_commands=available_commands,
+      cleaning_center=cleaning_center,
+      details=details,
+      errors=errors,
+      state=body["state"]
+  )
+  return response_body
+
+
+def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
+  code = payload["code"]
+  body = payload["body"]
+  runs = []
+  for run_data in body["runs"]:
+    settings = RunSettings(**run_data["settings"])
+    stats = RunStats(**run_data["stats"])
+    timing = RunTiming(**run_data["timing"])
+    run = Run(
+        settings=settings,
+        state=run_data["state"],
+        stats=stats,
+        timing=timing,
+        track_name=run_data.get("track_name"),
+        track_uuid=run_data.get("track_uuid")
+    )
+    runs.append(run)
+
+  timing = RunTiming(**body["timing"])
+
+  cleaning_state_body = CleaningStateBody(
+      ability=body["ability"],
+      cleaning_type=body["cleaning_type"],
+      floorplan_uuid=body.get("floorplan_uuid"),
+      runs=runs,
+      started_by=body["started_by"],
+      timing=timing
+  )
+
+  return CleaningStateResponse(code=code, body=cleaning_state_body)
+
 
 class KoboldWebSocketClient:
   def __init__(self, hass, token, robot_id, entity):
@@ -104,7 +159,7 @@ class KoboldWebSocketClient:
       response = payload["response"]
       body = response["body"]
       try:
-        response_body = self._parse_response_body(body)
+        response_body = _parse_response_body(body)
         await self.update_entity_state(response_body)
       except Exception as e:
         _LOGGER.error("Error parsing phx_reply response body: %s", e)
@@ -115,7 +170,7 @@ class KoboldWebSocketClient:
     if "body" in payload:
       body = payload["body"]
       try:
-        response_body = self._parse_response_body(body)
+        response_body = _parse_response_body(body)
         await self.update_entity_state(response_body)
       except Exception as e:
         _LOGGER.error("Error parsing last_state body: %s", e)
@@ -126,7 +181,7 @@ class KoboldWebSocketClient:
     if "body" in payload:
       body = payload["body"]
       try:
-        cleaning_state_response = self._parse_cleaning_state_body(payload)
+        cleaning_state_response = _parse_cleaning_state_body(payload)
         await self.update_cleaning_state(cleaning_state_response)
       except Exception as e:
         _LOGGER.error("Error parsing cleaning_state body: %s", e)
@@ -147,76 +202,25 @@ class KoboldWebSocketClient:
     #self.entity.async_write_ha_state()
     #_LOGGER.debug("Entity cleaning progress updated. Cleaned area: %s", total_area)
 
-
-  def _parse_response_body(self, body: Dict) -> ResponseBody:
-    autonomy_states = AutonomyStates(**body["autonomy_states"])
-    available_commands = AvailableCommands(**body["available_commands"])
-    cleaning_center = CleaningCenter(**body["cleaning_center"])
-    details = Details(**body["details"])
-    errors = None
-    if body.get("errors"):
-      errors = [Error(**error) for error in body["errors"]]
-
-    response_body = ResponseBody(
-        action=body["action"],
-        autonomy_states=autonomy_states,
-        available_commands=available_commands,
-        cleaning_center=cleaning_center,
-        details=details,
-        errors=errors,
-        state=body["state"]
-    )
-    return response_body
-
-  def _parse_cleaning_state_body(self, payload: Dict) -> CleaningStateResponse:
-    code = payload["code"]
-    body = payload["body"]
-    runs = []
-    for run_data in body["runs"]:
-      settings = RunSettings(**run_data["settings"])
-      stats = RunStats(**run_data["stats"])
-      timing = RunTiming(**run_data["timing"])
-      run = Run(
-          settings=settings,
-          state=run_data["state"],
-          stats=stats,
-          timing=timing,
-          track_name=run_data.get("track_name"),
-          track_uuid=run_data.get("track_uuid")
-      )
-      runs.append(run)
-
-    timing = RunTiming(**body["timing"])
-
-    cleaning_state_body = CleaningStateBody(
-        ability=body["ability"],
-        cleaning_type=body["cleaning_type"],
-        floorplan_uuid=body.get("floorplan_uuid"),
-        runs=runs,
-        started_by=body["started_by"],
-        timing=timing
-    )
-
-    return CleaningStateResponse(code=code, body=cleaning_state_body)
-
-
-
-
   async def update_entity_state(self, response_body: ResponseBody):
     """Actualiza el estado de la entidad basado en los datos de ResponseBody."""
     action = response_body.action
     state = response_body.state
     available_commands = response_body.available_commands
+    details = response_body.details
+    errors = response_body.errors
 
 
     if state == "busy" and action == "cleaning":
       ha_state = STATE_CLEANING
-    elif state == "idle":
-      ha_state = STATE_IDLE
+    elif state == "idle" and details and details.is_docked:
+      ha_state = STATE_DOCKED
     elif action == "cleaning" and state == "paused":
       ha_state = STATE_PAUSED
-    elif action == "cleaning" and state == "docked":
-      ha_state = STATE_DOCKED
+    elif action == "cleaning" and state == "busy":
+      ha_state = STATE_RETURNING
+    elif errors:
+      ha_state = STATE_ERROR
     else:
       ha_state = STATE_IDLE
 

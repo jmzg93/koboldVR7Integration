@@ -14,6 +14,7 @@ class MapDetails:
 
 @dataclass
 class RunSettings:
+  """Posibles valores son eco, turbo o auto"""
   mode: str
   navigation_mode: str
 

@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, List
 
+from ..api.model.register_device_response import RegisterDeviceResponse
 from ..api.model.robot_map_zones import CleaningTracksResponse
 from ..api.model.cleaning_start_request import RunSettings, MapDetails, Run
 from ..api.model.cleaning_start_request import CleaningStartRequest
@@ -32,6 +33,13 @@ async def execute(action_coro, action_description, identifier):
 class RobotsService:
   def __init__(self, robots_api_client):
     self.robots_api_client = robots_api_client
+
+  async def register_device(self, token) -> RegisterDeviceResponse:
+    return await execute(
+        self.robots_api_client.register_device(),
+        "register device",
+        None
+    )
 
   async def get_all_robots(self, token):
     return await execute(
@@ -68,38 +76,38 @@ class RobotsService:
         floorplan_uuid
     )
 
-  async def start_cleaning(self, token, robot_id, map_with_zone):
-    global floor_plan_uuid
-    global zones_uuid
+  async def start_cleaning(self, token, robot_id, fan_speed, map_with_zone):
     if map_with_zone is not None:
-      # Extraemos el floorplan_uuid del default_map
-      floor_plan_uuid = map_with_zone.map.floorplan_uuid if map_with_zone.map and map_with_zone.map.floorplan_uuid else None
-      if map_with_zone.zones is not None and isinstance(map_with_zone.zones, list):
-        # Si hay zonas, recopilamos sus UUIDs en una lista
-        zones_uuid = [zone.track_uuid for zone in map_with_zone.zones if hasattr(zone, 'track_uuid')]
-      else:
-        zones_uuid = None  # Si no hay zonas o no es una lista, dejamos la lista vacía
+      # Extraemos el floorplan_uuid del mapa
+      floor_plan_uuid = (
+        map_with_zone.map.floorplan_uuid
+        if map_with_zone.map and map_with_zone.map.floorplan_uuid
+        else None
+      )
 
+      # Generamos una lista de "Run" basada en las zonas configuradas o creamos un único "Run" sin zonas
+      zones = map_with_zone.zones if map_with_zone.zones else [None]
+      runs = [
+        Run(
+            settings=RunSettings(mode=fan_speed, navigation_mode="normal"),
+            map=MapDetails(
+                floorplan_uuid=floor_plan_uuid,
+                zone_uuid=zone.track_uuid if zone else None,
+                nogo_enabled=True,
+            )
+        )
+        for zone in zones
+      ]
 
-    cleaning_request = CleaningStartRequest(
-        runs=[
-          Run(
-              settings=RunSettings(mode="auto", navigation_mode="normal"),
-              map=MapDetails(
-                  floorplan_uuid=floor_plan_uuid,
-                  zone_uuid=zones_uuid,
-                  nogo_enabled=True
-              )
-          )
-        ]
-    )
+      # Crear la solicitud de limpieza
+      cleaning_request = CleaningStartRequest(runs=runs)
 
-    # Llamamos al API client con el payload generado
-    return await execute(
-        self.robots_api_client.start_cleaning(robot_id, cleaning_request),
-        "start cleaning for robot %s",
-        robot_id
-    )
+      # Enviar la solicitud
+      return await execute(
+          self.robots_api_client.start_cleaning(robot_id, cleaning_request),
+          "start cleaning for robot %s",
+          robot_id
+      )
 
   async def send_to_base(self, token, robot_id):
     return await execute(
@@ -125,6 +133,13 @@ class RobotsService:
   async def resume_cleaning(self, token, robot_id):
     return await execute(
         self.robots_api_client.resume_clean(robot_id),
+        "resume cleaning for robot %s",
+        robot_id
+    )
+
+  async def find_me(self, token, robot_id):
+    return await execute(
+        self.robots_api_client.find_me(robot_id),
         "resume cleaning for robot %s",
         robot_id
     )

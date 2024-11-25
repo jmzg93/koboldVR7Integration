@@ -104,11 +104,18 @@ class KoboldVacuumEntity(StateVacuumEntity):
         | VacuumEntityFeature.STATE
         | VacuumEntityFeature.BATTERY
         | VacuumEntityFeature.STATUS
+        #| VacuumEntityFeature.CLEAN_SPOT
+        | VacuumEntityFeature.FAN_SPEED
+        | VacuumEntityFeature.LOCATE
+        | VacuumEntityFeature.MAP
     )
 
     self._attr_state = STATE_IDLE
     self._attr_battery_level = None
     self._attr_status = None
+
+    self._attr_fan_speed_list = ['auto','eco','turbo']
+    self._attr_fan_speed = 'auto'
 
     # Inicializar el servicio WebSocket y pasar self como entidad
 
@@ -159,6 +166,11 @@ class KoboldVacuumEntity(StateVacuumEntity):
     return getattr(self, "_attr_available_commands", None)
 
   @property
+  def fan_speed(self):
+    """Devuelve los comandos disponibles para el robot."""
+    return getattr(self, "_attr_fan_speed", 'auto')
+
+  @property
   def bag_status(self):
     """Devuelve el estado de la bolsa de la aspiradora."""
     return getattr(self, "_attr_bag_status", None)
@@ -199,7 +211,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         default_map = self.map_with_zones_list[0] if self.map_with_zones_list else None
         await self._robots_service.start_cleaning(
             #self._id_token, self._robot.id, default_map
-            self._id_token, self._robot.id, MapWithZones(map=default_map.map, zones=None)
+            self._id_token, self._robot.id, self.fan_speed, MapWithZones(map=default_map.map, zones=None)
         )
       elif self.available_commands.resume:
         await self._robots_service.resume_cleaning(
@@ -207,6 +219,16 @@ class KoboldVacuumEntity(StateVacuumEntity):
         )
     else:
       _LOGGER.warning("Start command is not available for the robot.")
+
+  async def async_locate(self):
+    """Buscar el robot."""
+    await self._robots_service.find_me(self._id_token, self._robot.serial)
+
+  #async def async_clean_spot(self):
+  #  _LOGGER.info("Start command is not available for the robot.")
+
+  async def async_set_fan_speed(self, fan_speed: str):
+    self._attr_fan_speed = fan_speed
 
   async def async_pause(self):
     """Pausa la limpieza."""
@@ -224,6 +246,8 @@ class KoboldVacuumEntity(StateVacuumEntity):
         await self._robots_service.pause_cleaning(self._id_token, self._robot.serial)
         await asyncio.sleep(2)
         await self._robots_service.send_to_base(self._id_token, self._robot.serial)
+      else:
+        _LOGGER.warning("Return to base command is not available for the robot.")
     else:
       _LOGGER.warning("Return to base command is not available for the robot.")
 
