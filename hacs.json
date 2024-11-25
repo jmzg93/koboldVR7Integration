@@ -1,5 +1,5 @@
 {
-  "name": "Kobold Integration",
+  "name": "Kobold VR7 Integration",
   "content_in_root": false,
   "domains": ["kobold_vr7"],
   "homeassistant": "2024.11.2",
