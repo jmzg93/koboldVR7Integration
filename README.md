@@ -138,5 +138,11 @@ Have questions? Open an issue or reach out directly at [j_manuel_za@hotmail.com]
 
 ---
 
+## License
+[LICENSE.md](LICENSE.md)
+
+---
+
+
 💙 **Thank you for supporting this project!**  
 If you encounter issues or have feature requests, feel free to open an issue on GitHub. Your feedback helps improve the integration for everyone!
