@@ -251,7 +251,7 @@ class KoboldWebSocketClient:
             ha_state = STATE_DOCKED
         elif action == "cleaning" and state == "paused":
             ha_state = STATE_PAUSED
-        elif action == "cleaning" and state == "busy":
+        elif action == "docking":
             ha_state = STATE_RETURNING
         elif errors:
             ha_state = STATE_ERROR
