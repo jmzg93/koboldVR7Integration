@@ -50,6 +50,16 @@ This integration allows Home Assistant users to control and monitor their Kobold
 
 ## Installation
 
+### Installation via HACS
+
+1. Ensure you have [HACS](https://hacs.xyz/) installed in your Home Assistant instance.
+2. Go to **HACS > Integrations**.
+3. Click on the three dots menu in the top right corner and select **Custom repositories**.
+4. Add the repository URL `https://github.com/jmzg93/koboldHAIntegration` and select the category **Integration**.
+5. Click **Add**.
+6. The Kobold VR7 integration should now appear in the list of available integrations. Click **Install**.
+7. Restart Home Assistant.
+
 ### Manual Installation
 
 1. Clone or download this repository.
