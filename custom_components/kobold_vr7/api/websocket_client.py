@@ -24,11 +24,24 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _parse_response_body(body: Dict) -> ResponseBody:
-    autonomy_states = AutonomyStates(**body.get("autonomy_states", {}))
+    """Parsea el cuerpo de la respuesta en un objeto ResponseBody."""
+    autonomy_states_data = body.get("autonomy_states")
+    autonomy_states = None
+    if autonomy_states_data:  # Solo inicializa si autonomy_states no está vacío
+        autonomy_states = AutonomyStates(**autonomy_states_data)
+
     available_commands = AvailableCommands(
-        **body.get("available_commands", {}))
-    cleaning_center = CleaningCenter(**body.get("cleaning_center", {}))
-    details = Details(**body.get("details", {}))
+        **body.get("available_commands", {})
+    )
+
+    cleaning_center = CleaningCenter(
+        **body.get("cleaning_center", {})
+    )
+
+    details = Details(
+        **body.get("details", {})
+    )
+
     errors = None
     if body.get("errors"):
         errors = [Error(**error) for error in body["errors"]]
