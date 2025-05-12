@@ -50,16 +50,24 @@ class RobotsApiClient:
         response = await self._make_request("GET", url)
         return [CleaningTracksResponse(**zone) for zone in response]
 
-    async def start_cleaning(self, robot_id: str, cleaning_request: CleaningStartRequest) -> str:
+    async def start_cleaning(self, robot_id, cleaning_request):
+        """Inicia la limpieza con la configuración especificada."""
         url = f"{self._host}/robots/{robot_id}/cleaning/v2"
+        
+        # Si cleaning_request ya es un diccionario, lo usamos directamente
+        if isinstance(cleaning_request, dict):
+            payload = cleaning_request
+        else:
+            # Si no, asumimos que es un objeto modelo que necesita ser serializado
+            payload = cleaning_request.to_dict() if hasattr(cleaning_request, 'to_dict') else cleaning_request.__dict__
+        
         headers = {
-            "mobile-app-version": "3.9.0",
-            "mobile-app-build": "37883",
-            "mobile-app-os": "android",
-            "mobile-app-os-version": "11",
+            'mobile-app-version': '3.9.0',
+            'mobile-app-build': '37883',
+            'mobile-app-os': 'android',
+            'mobile-app-os-version': '11'
         }
-        # Assuming you have a method to convert dataclass to dict
-        payload = cleaning_request.to_dict()
+        
         response = await self._make_request("POST", url, json=payload, additional_headers=headers)
         return response
 

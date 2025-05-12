@@ -80,7 +80,34 @@ class RobotsService:
         )
 
     async def start_cleaning(self, token, robot_id, fan_speed, map_with_zone):
-        if map_with_zone is not None:
+        # Manejo específico para cuando no hay mapas (map_with_zone es None)
+        if map_with_zone is None:
+            # Para robots sin mapa, enviamos la propiedad 'map' como null
+            runs = [
+                {
+                    "settings": {
+                        "mode": fan_speed,
+                        "navigation_mode": "normal"
+                    },
+                    "map": None
+                }
+            ]
+            
+            # Crear la solicitud de limpieza directamente como un diccionario
+            cleaning_request = {"runs": runs}
+            
+            # Enviar la solicitud
+            return await execute(
+                self.robots_api_client.start_cleaning(
+                    robot_id, cleaning_request),
+                "start cleaning for robot %s",
+                robot_id
+            )
+        
+        # Continúa con el caso original cuando hay mapas
+        else:
+            # IMPLEMENTACIÓN TEMPORALMENTE COMENTADA - Se usará en el futuro cuando implementemos mapas
+            """
             # Extraemos el floorplan_uuid del mapa
             floor_plan_uuid = (
                 map_with_zone.map.floorplan_uuid
@@ -88,24 +115,55 @@ class RobotsService:
                 else None
             )
 
-            # Generamos una lista de "Run" basada en las zonas configuradas o creamos un único "Run" sin zonas
-            zones = map_with_zone.zones if map_with_zone.zones else [None]
-            runs = [
-                Run(
-                    settings=RunSettings(
-                        mode=fan_speed, navigation_mode="normal"),
-                    map=MapDetails(
-                        floorplan_uuid=floor_plan_uuid,
-                        zone_uuid=zone.track_uuid if zone else None,
-                        nogo_enabled=True,
-                    )
+            # Si no hay floorplan_uuid, no podemos continuar
+            if floor_plan_uuid is None:
+                raise UserDataServiceException(
+                    f"Cannot start cleaning: no floorplan_uuid available for robot {robot_id}"
                 )
-                for zone in zones
+
+            # Si tenemos zonas, creamos un Run por cada zona
+            if map_with_zone.zones:
+                runs = []
+                for zone in map_with_zone.zones:
+                    run = Run(
+                        settings=RunSettings(
+                            mode=fan_speed, navigation_mode="normal"),
+                        map=MapDetails(
+                            floorplan_uuid=floor_plan_uuid,
+                            zone_uuid=zone.track_uuid,
+                            nogo_enabled=True,
+                        )
+                    )
+                    runs.append(run)
+            else:
+                # Si no tenemos zonas, creamos un Run con el mapa pero sin zona específica
+                runs = [
+                    Run(
+                        settings=RunSettings(
+                            mode=fan_speed, navigation_mode="normal"),
+                        map=MapDetails(
+                            floorplan_uuid=floor_plan_uuid,
+                            zone_uuid=None,
+                            nogo_enabled=True,
+                        )
+                    )
+                ]
+            """
+            
+            # Por ahora, siempre usar la configuración sin map
+            runs = [
+                {
+                    "settings": {
+                        "mode": fan_speed,
+                        "navigation_mode": "normal"
+                    },
+                    "map": None
+                }
             ]
-
-            # Crear la solicitud de limpieza
-            cleaning_request = CleaningStartRequest(runs=runs)
-
+            
+            # Crear la solicitud de limpieza directamente como un diccionario
+            cleaning_request = {"runs": runs}
+            
             # Enviar la solicitud
             return await execute(
                 self.robots_api_client.start_cleaning(

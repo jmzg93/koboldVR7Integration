@@ -24,16 +24,16 @@ class RunSettings:
         return asdict(self)
 
 
-@dataclass
 class Run:
-    settings: RunSettings
-    map: MapDetails
+    def __init__(self, settings: RunSettings, map: MapDetails = None):
+        self.settings = settings
+        self.map = map
 
     def to_dict(self) -> dict:
         """Convierte la clase Run en un diccionario."""
         return {
             "settings": self.settings.to_dict(),  # Convierte RunSettings
-            "map": self.map.to_dict(),            # Convierte MapDetails
+            "map": self.map.to_dict() if self.map else None,  # Convierte MapDetails si existe
         }
 
 

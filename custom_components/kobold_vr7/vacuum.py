@@ -52,21 +52,30 @@ async def async_setup_entry(hass, entry, async_add_entities):
     robots = await robots_service.get_all_robots(id_token)
 
     entities = []
-    map_with_zones_list = []  # Lista para almacenar MapWithZones
 
     for robot in robots:
+        map_with_zones_list = []  # Lista para almacenar MapWithZones (específica para cada robot)
+        
+        # Intentamos obtener mapas, pero continuamos incluso si no hay ninguno
         maps = await robots_service.get_robot_map(id_token, robot.id)
-        if not maps:
-            _LOGGER.warning(f"No maps found for robot {robot.id}")
-            continue  # Si no hay mapas, pasa al siguiente robot
-
-        for robot_map in maps:
-            # Obtener las zonas para cada mapa
-            zones = await robots_service.get_zones_by_floor_plan(id_token, robot_map.floorplan_uuid)
-            # Crear el objeto MapWithZones y agregarlo a la lista
-            map_with_zones = MapWithZones(map=robot_map, zones=zones)
-            map_with_zones_list.append(map_with_zones)
-
+        
+        if maps:
+            for robot_map in maps:
+                # Obtener las zonas para cada mapa
+                try:
+                    zones = await robots_service.get_zones_by_floor_plan(id_token, robot_map.floorplan_uuid)
+                    # Crear el objeto MapWithZones y agregarlo a la lista
+                    map_with_zones = MapWithZones(map=robot_map, zones=zones)
+                    map_with_zones_list.append(map_with_zones)
+                except Exception as e:
+                    _LOGGER.warning(f"Error getting zones for map {robot_map.floorplan_uuid}: {e}")
+                    # Agregar el mapa sin zonas
+                    map_with_zones = MapWithZones(map=robot_map, zones=None)
+                    map_with_zones_list.append(map_with_zones)
+        else:
+            _LOGGER.info(f"No maps found for robot {robot.id}, continuing without maps")
+            
+        # Siempre añadimos la entidad, incluso sin mapas o zonas
         entities.append(KoboldVacuumEntity(
             hass, robot, robots_service, id_token, map_with_zones_list))
 
@@ -229,13 +238,12 @@ class KoboldVacuumEntity(StateVacuumEntity):
         """Inicia o reanuda la limpieza."""
         if self.available_commands:
             if self.available_commands.start:
-                # Usa el primer mapa como el mapa por defecto para la entidad del robot
-                """TODO implementar la selección de mapa y de zonas"""
+                # Verifica si hay mapas disponibles
                 default_map = self.map_with_zones_list[0] if self.map_with_zones_list else None
+                
+                # Iniciar la limpieza, pasando None como MapWithZones cuando no hay mapas
                 await self._robots_service.start_cleaning(
-                    # self._id_token, self._robot.id, default_map
-                    self._id_token, self._robot.id, self.fan_speed, MapWithZones(
-                        map=default_map.map, zones=None)
+                    self._id_token, self._robot.id, self.fan_speed, default_map
                 )
             elif self.available_commands.resume:
                 await self._robots_service.resume_cleaning(
