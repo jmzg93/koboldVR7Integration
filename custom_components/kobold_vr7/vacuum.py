@@ -4,16 +4,13 @@ from homeassistant.helpers.icon import icon_for_battery_level
 from homeassistant.components.vacuum import (
     StateVacuumEntity,
     VacuumEntityFeature,
-    STATE_CLEANING,
-    STATE_DOCKED,
-    STATE_IDLE,
-    STATE_PAUSED,
-    STATE_RETURNING,
+    VacuumActivity,
 )
 
 import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .service.model.map_with_zones import MapWithZones
 from .service.websocket_service import WebSocketService
@@ -44,7 +41,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     email = data[CONF_EMAIL]
     id_token = data[CONF_ID_TOKEN]
 
-    session = hass.helpers.aiohttp_client.async_get_clientsession()
+    # Usar la función importada directamente
+    session = async_get_clientsession(hass)
     robots_api_client = RobotsApiClient(
         session, token=id_token, host=ORBITAL_HOST
     )
@@ -77,15 +75,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Registrar servicios personalizados
     platform = entity_platform.async_get_current_platform()
 
+    # Usar el formato correcto para registrar servicios de entidad
     platform.async_register_entity_service(
         SERVICE_CLEAN_ZONE,
-        CLEAN_ZONE_SCHEMA,
+        vol.Schema({
+            vol.Required('zone_uuid'): cv.string,
+        }),
         'async_clean_zone'
     )
 
     platform.async_register_entity_service(
         SERVICE_CLEAN_MAP,
-        CLEAN_MAP_SCHEMA,
+        vol.Schema({
+            vol.Required('map_uuid'): cv.string,
+        }),
         'async_clean_map'
     )
 
@@ -116,7 +119,8 @@ class KoboldVacuumEntity(StateVacuumEntity):
             | VacuumEntityFeature.MAP
         )
 
-        self._attr_state = STATE_IDLE
+        # Usar el nuevo enum VacuumActivity para el estado
+        self._attr_activity = VacuumActivity.IDLE
         self._attr_battery_level = None
         self._attr_status = None
 
@@ -124,7 +128,6 @@ class KoboldVacuumEntity(StateVacuumEntity):
         self._attr_fan_speed = 'auto'
 
         # Inicializar el servicio WebSocket y pasar self como entidad
-
         self.websocket_service = WebSocketService(
             KoboldWebSocketClient(hass, id_token, robot.id, self)
         )
@@ -142,9 +145,23 @@ class KoboldVacuumEntity(StateVacuumEntity):
         await super().async_will_remove_from_hass()
 
     @property
+    def activity(self):
+        """Devuelve la actividad actual de la aspiradora usando VacuumActivity."""
+        return self._attr_activity
+
+    @property
     def state(self):
-        """Devuelve el estado actual de la aspiradora."""
-        return self._attr_state
+        """Mantener para compatibilidad con versiones anteriores."""
+        # Mapear VacuumActivity a los valores de estado anteriores para mantener compatibilidad
+        activity_to_state = {
+            VacuumActivity.CLEANING: "cleaning",
+            VacuumActivity.DOCKED: "docked",
+            VacuumActivity.IDLE: "idle",
+            VacuumActivity.PAUSED: "paused",
+            VacuumActivity.RETURNING: "returning",
+            VacuumActivity.ERROR: "error",
+        }
+        return activity_to_state.get(self._attr_activity, "idle")
 
     @property
     def battery_level(self):
@@ -154,9 +171,9 @@ class KoboldVacuumEntity(StateVacuumEntity):
     @property
     def status(self):
         """Devuelve el estado detallado de la aspiradora."""
-        if self._attr_state == STATE_CLEANING and self.available_commands.pause:
+        if self._attr_activity == VacuumActivity.CLEANING and self.available_commands and self.available_commands.pause:
             return "Pausar"
-        elif self._attr_state == STATE_PAUSED and self.available_commands.return_to_base:
+        elif self._attr_activity == VacuumActivity.PAUSED and self.available_commands and self.available_commands.return_to_base:
             return "Enviar a la Base"
         return self._attr_status
 
