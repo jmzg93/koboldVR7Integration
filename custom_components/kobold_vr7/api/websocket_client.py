@@ -11,14 +11,7 @@ from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
 from .model.robot_wss_last_state_or_phx_reply_response import AutonomyStates, AvailableCommands, \
     CleaningCenter, Details, Error, ResponseBody
 
-from homeassistant.components.vacuum import (
-    STATE_CLEANING,
-    STATE_DOCKED,
-    STATE_IDLE,
-    STATE_PAUSED,
-    STATE_RETURNING,
-    STATE_ERROR,
-)
+from homeassistant.components.vacuum import VacuumActivity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -258,21 +251,22 @@ class KoboldWebSocketClient:
         details = response_body.details
         errors = response_body.errors
 
+        # Actualizar el estado usando VacuumActivity
         if state == "busy" and action == "cleaning":
-            ha_state = STATE_CLEANING
+            ha_activity = VacuumActivity.CLEANING
         elif state == "idle" and details and details.is_docked:
-            ha_state = STATE_DOCKED
+            ha_activity = VacuumActivity.DOCKED
         elif action == "cleaning" and state == "paused":
-            ha_state = STATE_PAUSED
+            ha_activity = VacuumActivity.PAUSED
         elif action == "docking":
-            ha_state = STATE_RETURNING
+            ha_activity = VacuumActivity.RETURNING
         elif errors:
-            ha_state = STATE_ERROR
+            ha_activity = VacuumActivity.ERROR
         else:
-            ha_state = STATE_IDLE
+            ha_activity = VacuumActivity.IDLE
 
         # Actualizar la entidad
-        self.entity._attr_state = ha_state
+        self.entity._attr_activity = ha_activity
         self.entity._attr_battery_level = response_body.details.charge
         self.entity._attr_status = action
 
@@ -291,7 +285,7 @@ class KoboldWebSocketClient:
         # Confirmar los cambios de estado a Home Assistant
         self.entity.async_write_ha_state()
         _LOGGER.debug(
-            "Entity state updated in Home Assistant with state: %s", ha_state)
+            "Entity state updated in Home Assistant with activity: %s", ha_activity)
 
     async def disconnect(self):
         self._should_reconnect = False  # Detener intentos de reconexión
