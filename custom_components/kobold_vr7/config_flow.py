@@ -5,6 +5,7 @@ Este módulo maneja el flujo de configuración para la integración Kobold VR7 e
 import voluptuous as vol
 import logging
 from homeassistant import config_entries
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import DOMAIN, CONF_EMAIL, CONF_OTP, CONF_ID_TOKEN, AUTH_HOST
 from .service.user_data_service import UserDataService
 from .api.user_api_client import UserApiClient
@@ -33,7 +34,8 @@ class KoboldConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             # Crear instancia de UserDataService
             try:
-                session = self.hass.helpers.aiohttp_client.async_get_clientsession()
+                # Corregido: usar la función importada directamente
+                session = async_get_clientsession(self.hass)
                 user_api_client = UserApiClient(
                     session,
                     host=AUTH_HOST,

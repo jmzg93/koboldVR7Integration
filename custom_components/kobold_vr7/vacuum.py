@@ -14,6 +14,7 @@ from homeassistant.components.vacuum import (
 import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .service.model.map_with_zones import MapWithZones
 from .service.websocket_service import WebSocketService
@@ -44,7 +45,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
     email = data[CONF_EMAIL]
     id_token = data[CONF_ID_TOKEN]
 
-    session = hass.helpers.aiohttp_client.async_get_clientsession()
+    # Corregido: usar la función importada directamente en lugar de acceder a través de hass.helpers
+    session = async_get_clientsession(hass)
     robots_api_client = RobotsApiClient(
         session, token=id_token, host=ORBITAL_HOST
     )
