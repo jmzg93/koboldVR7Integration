@@ -2,8 +2,10 @@ import asyncio
 import logging
 import json
 import uuid
+import ssl
 from typing import Dict
 import websockets
+from websockets.client import connect as websockets_connect
 
 from websockets.exceptions import ConnectionClosed
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
@@ -23,9 +25,20 @@ def _parse_response_body(body: Dict) -> ResponseBody:
     if autonomy_states_data:  # Solo inicializa si autonomy_states no está vacío
         autonomy_states = AutonomyStates(**autonomy_states_data)
 
-    available_commands = AvailableCommands(
-        **body.get("available_commands", {})
-    )
+    # Valores por defecto para available_commands en caso de que falten
+    available_commands_default = {
+        "cancel": False,
+        "extract": False,
+        "pause": False,
+        "resume": False,
+        "return_to_base": False,
+        "start": False
+    }
+    
+    # Combinar valores por defecto con los recibidos (los recibidos tienen prioridad)
+    available_commands_data = {**available_commands_default, **body.get("available_commands", {})}
+    
+    available_commands = AvailableCommands(**available_commands_data)
 
     cleaning_center = CleaningCenter(
         **body.get("cleaning_center", {})
@@ -101,7 +114,12 @@ class KoboldWebSocketClient:
         max_delay = 300  # Retraso máximo de 5 minutos
         while self._should_reconnect:
             try:
-                self.websocket = await websockets.connect(self._url)
+                # Reemplazamos la conexión bloqueante con una que utilice ssl_context pre-configurado
+                ssl_context = self._get_ssl_context()
+                self.websocket = await websockets.connect(
+                    self._url,
+                    ssl=ssl_context
+                )
                 self.connected = True
                 _LOGGER.debug("Conectado al WebSocket")
                 await self._join_robot_channel()
@@ -115,6 +133,12 @@ class KoboldWebSocketClient:
                 await asyncio.sleep(retry_delay)
                 # Backoff exponencial
                 retry_delay = min(retry_delay * 2, max_delay)
+
+    def _get_ssl_context(self):
+        """Crea y configura el contexto SSL fuera del loop de eventos."""
+        # Creamos el contexto SSL de forma segura para el event loop
+        ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        return ssl_context
 
     async def _join_robot_channel(self):
         # Enviar mensaje para unirse al canal del robot
