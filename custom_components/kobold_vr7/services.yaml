@@ -1,0 +1,33 @@
+# Servicio para limpiar una zona específica
+clean_zone:
+  name: Clean zone
+  description: Start cleaning a specific zone.
+  target:
+    entity:
+      domain: vacuum
+      integration: kobold_vr7
+  fields:
+    zone_uuid:
+      name: Zone UUID
+      description: The UUID of the zone to clean
+      required: true
+      example: "zone123456789"
+      selector:
+        text:
+
+# Servicio para limpiar un mapa específico
+clean_map:
+  name: Clean map
+  description: Start cleaning a specific map.
+  target:
+    entity:
+      domain: vacuum
+      integration: kobold_vr7
+  fields:
+    map_uuid:
+      name: Map UUID
+      description: The UUID of the map to clean
+      required: true
+      example: "map123456789"
+      selector:
+        text:

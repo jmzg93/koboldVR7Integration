@@ -1,4 +1,3 @@
-
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support%20My%20Work-orange)](https://buymeacoffee.com/jmzg93)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue)](https://www.paypal.com/donate?business=j_manuel_za@hotmail.com)
 
@@ -140,6 +139,10 @@ If the integration fails to load, ensure that:
 
 Check the logs in **Settings > System > Logs** for detailed error messages.
 
+### Known Issues
+
+If you see warnings in your logs about blocking SSL operations or entity service schemas, make sure you're using version 2.0.1 or later of this integration which addresses these Home Assistant compatibility issues.
+
 ---
 
 ## Contributing
@@ -156,3 +159,11 @@ Have questions? Open an issue or reach out directly at [j_manuel_za@hotmail.com]
 
 💙 **Thank you for supporting this project!**  
 If you encounter issues or have feature requests, feel free to open an issue on GitHub. Your feedback helps improve the integration for everyone!
+
+## Changelog
+
+### 2.0.1 (2025-05-13)
+- Fixed Home Assistant 2025.5.0+ compatibility issues:
+  - Updated WebSocket client to avoid blocking SSL operations
+  - Fixed entity service registrations to use proper schema format
+  - Properly implemented activity property using VacuumActivity enum
