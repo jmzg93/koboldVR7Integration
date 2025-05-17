@@ -6,6 +6,7 @@ import voluptuous as vol
 import logging
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.core import callback
 from .const import DOMAIN, CONF_EMAIL, CONF_OTP, CONF_ID_TOKEN, AUTH_HOST
 from .service.user_data_service import UserDataService
 from .api.user_api_client import UserApiClient
@@ -32,15 +33,18 @@ class KoboldConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(self.email)
             self._abort_if_unique_id_configured()
 
-            # Crear instancia de UserDataService
+            # Obtener el idioma de la configuración del usuario
+            language = self.hass.config.language
+
+            # Crear instancia de UserDataService con el idioma del usuario
             try:
-                # Corregido: usar la función importada directamente
                 session = async_get_clientsession(self.hass)
                 user_api_client = UserApiClient(
                     session,
                     host=AUTH_HOST,
                     path_send_otp="/passwordless/start",
-                    path_validate_otp="/oauth/token"
+                    path_validate_otp="/oauth/token",
+                    language=language  # Agregamos el idioma
                 )
                 self.user_data_service = UserDataService(user_api_client)
 

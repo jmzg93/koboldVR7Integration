@@ -126,6 +126,8 @@ The integration provides detailed attributes for your robot entities:
 | `available_commands`| Commands currently available for the robot.  |
 | `maps`              | List of available floorplans.                |
 | `zones`             | Detailed information about zones in each map.|
+| `fan_speed`         | Current fan speed mode (`auto`, `eco`, `turbo`). |
+| `bag_status`        | Status of the vacuum's bag/container.        |
 
 ---
 
@@ -136,12 +138,35 @@ If the integration fails to load, ensure that:
 1. You have placed the `kobold_vr7` folder in the correct `custom_components` directory.
 2. You have restarted Home Assistant after installing the integration.
 3. Your Home Assistant instance has access to the internet for API calls.
+4. Your Kobold account is active and the robot is properly set up in the official app.
 
-Check the logs in **Settings > System > Logs** for detailed error messages.
+Check the logs in **Settings > System > Logs** for detailed error messages. You can increase the logging level for this integration by adding the following to your `configuration.yaml`:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.kobold_vr7: debug
+```
 
 ### Known Issues
 
 If you see warnings in your logs about blocking SSL operations or entity service schemas, make sure you're using version 2.0.1 or later of this integration which addresses these Home Assistant compatibility issues.
+
+#### System-Specific Notes
+- On Raspberry Pi systems, some users may experience SSL-related warnings in the logs. Version 2.0.2 addresses these issues with an improved SSL context handling.
+- If you encounter WebSocket connection issues, try increasing your network timeout settings or check if your network is blocking WebSocket connections.
+
+---
+
+## Multilingual Support
+
+Starting from version 2.0.2, this integration supports multiple languages:
+- English
+- Spanish
+- German
+
+The language is automatically selected based on your Home Assistant locale settings.
 
 ---
 
@@ -166,7 +191,10 @@ If you encounter issues or have feature requests, feel free to open an issue on 
 - Added default values for available commands to prevent errors with incomplete responses
 - Fixed SSL context creation in WebSocket client to avoid blocking calls on Raspberry Pi systems
 - Improved error handling and logging
-- Add German translation
+- Added multilingual support with German and Spanish translations
+- Added dynamic language detection to use the Home Assistant configured locale
+- Enhanced attribute reporting with bag status and fan speed information
+- Improved troubleshooting documentation
 
 ### 2.0.1 (2025-05-13)
 - Fixed Home Assistant 2025.5.0+ compatibility issues:

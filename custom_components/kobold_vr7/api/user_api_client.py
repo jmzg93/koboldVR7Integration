@@ -13,6 +13,7 @@ class UserApiClient:
         host: str,
         path_send_otp: str,
         path_validate_otp: str,
+        language: str = "es",  # Parámetro adicional para el idioma
     ):
         self._session = session
         self.host = host
@@ -20,6 +21,7 @@ class UserApiClient:
         self.path_validate_otp = path_validate_otp
         self._logger = logging.getLogger(__name__)
         self.client_id = "FPSBig7ePFvAE6q99cEDROM8gYUTygkD"
+        self.language = language  # Guardamos el idioma como propiedad
 
     async def request_otp(self, email: str) -> Any:
         url = self.host + self.path_send_otp
@@ -41,7 +43,7 @@ class UserApiClient:
             "otp": otp,
             "realm": "email",
             "platform": "android",
-            "locale": "es",
+            "locale": self.language,  # Usando el idioma configurado
             "source": "vorwerk_auth0_international",
         }
         response = await self._make_request("POST", url, json=payload)
@@ -66,8 +68,16 @@ class UserApiClient:
             response.raise_for_status()
 
     def _create_headers(self) -> Dict[str, str]:
+        # Usamos el formato correcto para Accept-Language basado en el idioma configurado
+        language_code = self.language
+        # Si el idioma tiene formato simple (ej. "es"), lo convertimos a formato completo ("es-ES")
+        if len(language_code) == 2:
+            language_header = f"{language_code}-{language_code.upper()}"
+        else:
+            language_header = language_code
+            
         return {
             "Content-Type": "application/json",
-            "Accept-Language": "es-ES",
+            "Accept-Language": language_header,
             "User-Agent": "okhttp/4.12.0",
         }
