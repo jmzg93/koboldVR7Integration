@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit Kobold verbinden",
+        "description": "Geben Sie Ihre E-Mail-Adresse ein, um den OTP-Code zu erhalten.",
+        "data": {
+          "email": "E-Mail"
+        }
+      },
+      "otp": {
+        "title": "OTP-Code eingeben",
+        "description": "Geben Sie den OTP-Code ein, den Sie in Ihrer E-Mail erhalten haben.",
+        "data": {
+          "otp": "OTP-Code"
+        }
+      }
+    },
+    "error": {
+      "cannot_send_otp": "Der OTP-Code konnte nicht gesendet werden. Bitte überprüfen Sie Ihre E-Mail-Adresse und versuchen Sie es erneut.",
+      "invalid_otp": "Ungültiger OTP-Code. Bitte versuchen Sie es erneut."
+    },
+    "abort": {
+      "already_configured": "Diese E-Mail-Adresse ist bereits konfiguriert."
+    }
+  }
+}

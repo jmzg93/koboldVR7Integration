@@ -162,6 +162,12 @@ If you encounter issues or have feature requests, feel free to open an issue on 
 
 ## Changelog
 
+### 2.0.2 (2025-05-17)
+- Added default values for available commands to prevent errors with incomplete responses
+- Fixed SSL context creation in WebSocket client to avoid blocking calls on Raspberry Pi systems
+- Improved error handling and logging
+- Add German translation
+
 ### 2.0.1 (2025-05-13)
 - Fixed Home Assistant 2025.5.0+ compatibility issues:
   - Updated WebSocket client to avoid blocking SSL operations

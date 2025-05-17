@@ -3,6 +3,7 @@ import logging
 import json
 import uuid
 import ssl
+import os
 from typing import Dict
 import websockets
 from websockets.client import connect as websockets_connect
@@ -96,6 +97,10 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
     return CleaningStateResponse(code=code, body=cleaning_state_body)
 
 
+# Crear un contexto SSL una sola vez para toda la aplicación
+# Esta operación bloqueante se realiza al importar el módulo, no dentro del bucle de eventos
+_SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+
 class KoboldWebSocketClient:
     def __init__(self, hass, token, robot_id, entity):
         self.hass = hass
@@ -114,11 +119,10 @@ class KoboldWebSocketClient:
         max_delay = 300  # Retraso máximo de 5 minutos
         while self._should_reconnect:
             try:
-                # Reemplazamos la conexión bloqueante con una que utilice ssl_context pre-configurado
-                ssl_context = self._get_ssl_context()
+                # Usar el contexto SSL global pre-creado
                 self.websocket = await websockets.connect(
                     self._url,
-                    ssl=ssl_context
+                    ssl=_SSL_CONTEXT
                 )
                 self.connected = True
                 _LOGGER.debug("Conectado al WebSocket")
@@ -133,12 +137,6 @@ class KoboldWebSocketClient:
                 await asyncio.sleep(retry_delay)
                 # Backoff exponencial
                 retry_delay = min(retry_delay * 2, max_delay)
-
-    def _get_ssl_context(self):
-        """Crea y configura el contexto SSL fuera del loop de eventos."""
-        # Creamos el contexto SSL de forma segura para el event loop
-        ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        return ssl_context
 
     async def _join_robot_channel(self):
         # Enviar mensaje para unirse al canal del robot
