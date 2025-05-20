@@ -1,7 +1,7 @@
 {
   "domain": "kobold_vr7",
   "name": "Kobold VR7 Vacuum",
-  "version": "2.0.2-RC2",
+  "version": "2.0.2",
   "documentation": "https://github.com/jmzg93/koboldHAIntegration",
   "dependencies": [],
   "codeowners": ["@jmzg93"],
