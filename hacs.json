@@ -2,6 +2,6 @@
   "name": "Kobold VR7 Integration",
   "content_in_root": false,
   "domains": ["kobold_vr7"],
-  "homeassistant": "2024.11.2",
+  "homeassistant": "2025.5.0",
   "render_readme": true
 }

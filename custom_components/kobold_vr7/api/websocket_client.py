@@ -2,8 +2,11 @@ import asyncio
 import logging
 import json
 import uuid
+import ssl
+import os
 from typing import Dict
 import websockets
+from websockets.client import connect as websockets_connect
 
 from websockets.exceptions import ConnectionClosed
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
@@ -23,9 +26,20 @@ def _parse_response_body(body: Dict) -> ResponseBody:
     if autonomy_states_data:  # Solo inicializa si autonomy_states no está vacío
         autonomy_states = AutonomyStates(**autonomy_states_data)
 
-    available_commands = AvailableCommands(
-        **body.get("available_commands", {})
-    )
+    # Valores por defecto para available_commands en caso de que falten
+    available_commands_default = {
+        "cancel": False,
+        "extract": False,
+        "pause": False,
+        "resume": False,
+        "return_to_base": False,
+        "start": False
+    }
+    
+    # Combinar valores por defecto con los recibidos (los recibidos tienen prioridad)
+    available_commands_data = {**available_commands_default, **body.get("available_commands", {})}
+    
+    available_commands = AvailableCommands(**available_commands_data)
 
     cleaning_center = CleaningCenter(
         **body.get("cleaning_center", {})
@@ -83,6 +97,10 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
     return CleaningStateResponse(code=code, body=cleaning_state_body)
 
 
+# Crear un contexto SSL una sola vez para toda la aplicación
+# Esta operación bloqueante se realiza al importar el módulo, no dentro del bucle de eventos
+_SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+
 class KoboldWebSocketClient:
     def __init__(self, hass, token, robot_id, entity):
         self.hass = hass
@@ -101,7 +119,11 @@ class KoboldWebSocketClient:
         max_delay = 300  # Retraso máximo de 5 minutos
         while self._should_reconnect:
             try:
-                self.websocket = await websockets.connect(self._url)
+                # Usar el contexto SSL global pre-creado
+                self.websocket = await websockets.connect(
+                    self._url,
+                    ssl=_SSL_CONTEXT
+                )
                 self.connected = True
                 _LOGGER.debug("Conectado al WebSocket")
                 await self._join_robot_channel()

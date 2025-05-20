@@ -26,14 +26,6 @@ _LOGGER = logging.getLogger(__name__)
 SERVICE_CLEAN_ZONE = 'clean_zone'
 SERVICE_CLEAN_MAP = 'clean_map'
 
-CLEAN_ZONE_SCHEMA = vol.Schema({
-    vol.Required('zone_uuid'): cv.string,
-})
-
-CLEAN_MAP_SCHEMA = vol.Schema({
-    vol.Required('map_uuid'): cv.string,
-})
-
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Configura la entidad de aspiradora basada en una entrada de configuración."""
@@ -81,25 +73,29 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     async_add_entities(entities, update_before_add=True)
 
-    # Registrar servicios personalizados
-    platform = entity_platform.async_get_current_platform()
+    # Registrar servicios personalizados después de haber añadido las entidades
+    try:
+        platform = entity_platform.async_get_current_platform()
+        
+        # Modificamos la forma de registrar servicios para evitar problemas de esquema
+        platform.async_register_entity_service(
+            SERVICE_CLEAN_ZONE,
+            {
+                vol.Required('zone_uuid'): cv.string,
+            },
+            'async_clean_zone'
+        )
 
-    # Usar el formato correcto para registrar servicios de entidad
-    platform.async_register_entity_service(
-        SERVICE_CLEAN_ZONE,
-        vol.Schema({
-            vol.Required('zone_uuid'): cv.string,
-        }),
-        'async_clean_zone'
-    )
-
-    platform.async_register_entity_service(
-        SERVICE_CLEAN_MAP,
-        vol.Schema({
-            vol.Required('map_uuid'): cv.string,
-        }),
-        'async_clean_map'
-    )
+        platform.async_register_entity_service(
+            SERVICE_CLEAN_MAP,
+            {
+                vol.Required('map_uuid'): cv.string,
+            },
+            'async_clean_map'
+        )
+        _LOGGER.debug("Successfully registered custom vacuum services")
+    except Exception as e:
+        _LOGGER.error(f"Error registering custom services: {e}")
 
 
 class KoboldVacuumEntity(StateVacuumEntity):
@@ -128,7 +124,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
             | VacuumEntityFeature.MAP
         )
 
-        # Usar el nuevo enum VacuumActivity para el estado
+        # Por defecto, establecemos la actividad como IDLE
         self._attr_activity = VacuumActivity.IDLE
         self._attr_battery_level = None
         self._attr_status = None
@@ -157,20 +153,6 @@ class KoboldVacuumEntity(StateVacuumEntity):
     def activity(self):
         """Devuelve la actividad actual de la aspiradora usando VacuumActivity."""
         return self._attr_activity
-
-    @property
-    def state(self):
-        """Mantener para compatibilidad con versiones anteriores."""
-        # Mapear VacuumActivity a los valores de estado anteriores para mantener compatibilidad
-        activity_to_state = {
-            VacuumActivity.CLEANING: "cleaning",
-            VacuumActivity.DOCKED: "docked",
-            VacuumActivity.IDLE: "idle",
-            VacuumActivity.PAUSED: "paused",
-            VacuumActivity.RETURNING: "returning",
-            VacuumActivity.ERROR: "error",
-        }
-        return activity_to_state.get(self._attr_activity, "idle")
 
     @property
     def battery_level(self):
