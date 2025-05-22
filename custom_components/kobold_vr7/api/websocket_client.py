@@ -41,9 +41,17 @@ def _parse_response_body(body: Dict) -> ResponseBody:
     
     available_commands = AvailableCommands(**available_commands_data)
 
-    cleaning_center = CleaningCenter(
-        **body.get("cleaning_center", {})
-    )
+    # Añadir valores por defecto para cleaning_center para evitar el error de falta de parámetros
+    cleaning_center_default = {
+        "bag_status": None,
+        "base_error": None,
+        "state": None
+    }
+    
+    # Combinar valores por defecto con los recibidos
+    cleaning_center_data = {**cleaning_center_default, **body.get("cleaning_center", {})}
+    
+    cleaning_center = CleaningCenter(**cleaning_center_data)
 
     details = Details(
         **body.get("details", {})

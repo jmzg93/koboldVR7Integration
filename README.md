@@ -187,6 +187,11 @@ If you encounter issues or have feature requests, feel free to open an issue on 
 
 ## Changelog
 
+### 2.0.3 (2025-05-20)
+- Fixed an issue with the CleaningCenter constructor that required mandatory parameters
+- Added default values for bag_status, base_error and state in CleaningCenter
+- Improved robustness when handling incomplete WebSocket responses
+
 ### 2.0.2 (2025-05-17)
 - Added default values for available commands to prevent errors with incomplete responses
 - Fixed SSL context creation in WebSocket client to avoid blocking calls on Raspberry Pi systems
