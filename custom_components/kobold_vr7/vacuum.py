@@ -217,15 +217,12 @@ class KoboldVacuumEntity(StateVacuumEntity):
         return attributes
 
     async def async_start(self):
-        """Inicia o reanuda la limpieza."""
+        """Inicia o reanuda la limpieza sin mapas (limpieza general)."""
         if self.available_commands:
             if self.available_commands.start:
-                # Verifica si hay mapas disponibles
-                default_map = self.map_with_zones_list[0] if self.map_with_zones_list else None
-                
-                # Iniciar la limpieza, pasando None como MapWithZones cuando no hay mapas
+                # Iniciar limpieza sin un mapa específico (pasando None)
                 await self._robots_service.start_cleaning(
-                    self._id_token, self._robot.id, self.fan_speed, default_map
+                    self._id_token, self._robot.id, self.fan_speed, None
                 )
             elif self.available_commands.resume:
                 await self._robots_service.resume_cleaning(
@@ -295,13 +292,20 @@ class KoboldVacuumEntity(StateVacuumEntity):
         """Inicia la limpieza de un mapa específico."""
         if self.available_commands and self.available_commands.start:
             # Buscar el mapa correspondiente al map_uuid
+            selected_map_with_zones = None
+            
             for map_with_zones in self.map_with_zones_list:
                 if map_with_zones.map.floorplan_uuid == map_uuid:
-                    # Iniciar la limpieza usando el mapa (sin zonas específicas)
-                    await self._robots_service.start_cleaning(
-                        self._id_token, self._robot.id, map_with_zones.map, None
-                    )
-                    return
-            _LOGGER.warning(f"Map with UUID {map_uuid} not found.")
+                    selected_map_with_zones = map_with_zones
+                    break
+                    
+            if selected_map_with_zones:
+                _LOGGER.info(f"Iniciando limpieza con mapa específico: {map_uuid}")
+                # Iniciar la limpieza usando el mapa seleccionado
+                await self._robots_service.start_cleaning(
+                    self._id_token, self._robot.id, self.fan_speed, selected_map_with_zones
+                )
+            else:
+                _LOGGER.warning(f"Map with UUID {map_uuid} not found.")
         else:
             _LOGGER.warning("Start command is not available for the robot.")

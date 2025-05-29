@@ -94,7 +94,7 @@ class RobotsService:
             ]
             
             # Crear la solicitud de limpieza directamente como un diccionario
-            cleaning_request = {"runs": runs}
+            cleaning_request = {"runs": runs, "ability": "cleaning.start"}
             
             # Enviar la solicitud
             return await execute(
@@ -105,13 +105,12 @@ class RobotsService:
             )
         
         # Continúa con el caso original cuando hay mapas
+
         else:
-            # IMPLEMENTACIÓN TEMPORALMENTE COMENTADA - Se usará en el futuro cuando implementemos mapas
-            """
             # Extraemos el floorplan_uuid del mapa
             floor_plan_uuid = (
                 map_with_zone.map.floorplan_uuid
-                if map_with_zone.map and map_with_zone.map.floorplan_uuid
+                if map_with_zone.map and hasattr(map_with_zone.map, 'floorplan_uuid')
                 else None
             )
 
@@ -121,48 +120,42 @@ class RobotsService:
                     f"Cannot start cleaning: no floorplan_uuid available for robot {robot_id}"
                 )
 
+            runs = []
+
             # Si tenemos zonas, creamos un Run por cada zona
-            if map_with_zone.zones:
-                runs = []
+            if hasattr(map_with_zone, 'zones') and map_with_zone.zones:
                 for zone in map_with_zone.zones:
-                    run = Run(
-                        settings=RunSettings(
-                            mode=fan_speed, navigation_mode="normal"),
-                        map=MapDetails(
-                            floorplan_uuid=floor_plan_uuid,
-                            zone_uuid=zone.track_uuid,
-                            nogo_enabled=True,
-                        )
-                    )
+                    run = {
+                        "settings": {
+                            "mode": fan_speed,
+                            "navigation_mode": "normal"
+                        },
+                        "map": {
+                            "floorplan_uuid": floor_plan_uuid,
+                            "zone_uuid": zone.track_uuid,
+                            "nogo_enabled": True
+                        }
+                    }
                     runs.append(run)
             else:
                 # Si no tenemos zonas, creamos un Run con el mapa pero sin zona específica
                 runs = [
-                    Run(
-                        settings=RunSettings(
-                            mode=fan_speed, navigation_mode="normal"),
-                        map=MapDetails(
-                            floorplan_uuid=floor_plan_uuid,
-                            zone_uuid=None,
-                            nogo_enabled=True,
-                        )
-                    )
+                    {
+                        "settings": {
+                            "mode": fan_speed,
+                            "navigation_mode": "normal"
+                        },
+                        "map": {
+                            "floorplan_uuid": floor_plan_uuid,
+                            "zone_uuid": None,
+                            "nogo_enabled": True
+                        }
+                    }
                 ]
-            """
-            
-            # Por ahora, siempre usar la configuración sin map
-            runs = [
-                {
-                    "settings": {
-                        "mode": fan_speed,
-                        "navigation_mode": "normal"
-                    },
-                    "map": None
-                }
-            ]
             
             # Crear la solicitud de limpieza directamente como un diccionario
-            cleaning_request = {"runs": runs}
+            cleaning_request = {"runs": runs, "ability": "cleaning.start"}
+
             
             # Enviar la solicitud
             return await execute(

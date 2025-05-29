@@ -22,7 +22,7 @@ This integration allows Home Assistant users to control and monitor their Kobold
 - Zone-specific and map-specific cleaning.
 
 ### 🚧 **Work in Progress**
-- Features like **cleaning specific zones** and **cleaning entire maps** are currently under development and may not work as expected.
+- ~~Features like **cleaning specific zones** and **cleaning entire maps** are currently under development and may not work as expected.~~ Zone-specific and map-specific cleaning now implemented!
 - As this is my first integration and my first time using Python, the code might not be the most efficient or well-structured. Your feedback and contributions are greatly appreciated!
 
 ## Features
@@ -33,7 +33,7 @@ This integration allows Home Assistant users to control and monitor their Kobold
   - Locate the robot.
   - Adjust fan speed with modes (`auto`, `eco`, `turbo`).
 - **Zone and Map Cleaning**:
-  - Start cleaning specific zones or entire maps (in progress).
+  - Start cleaning specific zones or entire maps.
 - **Monitoring**:
   - Robot state (cleaning, docked, idle, etc.).
   - Battery level.
@@ -79,16 +79,14 @@ The Kobold integration includes the following custom services:
 
 ### **`vacuum.clean_zone`**
 
-Starts cleaning a specific zone.  
-**Note**: This service is under development and may not function correctly.
+Starts cleaning a specific zone.
 
 - **Parameters**:
   - `zone_uuid` (required): The UUID of the zone to clean.
 
 ### **`vacuum.clean_map`**
 
-Starts cleaning an entire map.  
-**Note**: This service is under development and may not function correctly.
+Starts cleaning an entire map.
 
 - **Parameters**:
   - `map_uuid` (required): The UUID of the map to clean.
@@ -108,8 +106,8 @@ Once the integration is set up, entities corresponding to your Kobold robots wil
   - `vacuum.return_to_base`: Sends the robot to its base.
   - `vacuum.locate`: Finds the robot.
 - **Custom Services**:
-  - `vacuum.clean_zone`: Cleans a specific zone (in progress).
-  - `vacuum.clean_map`: Cleans an entire map (in progress).
+  - `vacuum.clean_zone`: Cleans a specific zone.
+  - `vacuum.clean_map`: Cleans an entire map.
 
 ---
 
@@ -181,11 +179,18 @@ Have questions? Open an issue or reach out directly at [j_manuel_za@hotmail.com]
 
 ---
 
-
 💙 **Thank you for supporting this project!**  
 If you encounter issues or have feature requests, feel free to open an issue on GitHub. Your feedback helps improve the integration for everyone!
 
 ## Changelog
+
+### 2.0.4 (2025-06-01)
+- Implemented zone-specific and map-specific cleaning features
+- Fixed the way robot maps are processed to make zone cleaning fully functional
+- Updated documentation to reflect the new features
+- Made robot map responses more resilient by making fields optional
+- Improved default cleaning behavior: standard start command now cleans without map constraints
+- Added clearer documentation for map and zone selection via Home Assistant services
 
 ### 2.0.3 (2025-05-20)
 - Fixed an issue with the CleaningCenter constructor that required mandatory parameters

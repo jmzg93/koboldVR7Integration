@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -59,5 +59,5 @@ class RobotMapResponse:
     processed_real_binary: str
     processed_rank_binary: str
     map_colors: MapColors
-    last_modified_at: str
-    map_versions_count: int
+    last_modified_at: Optional[str] = None
+    map_versions_count: Optional[int] = None
