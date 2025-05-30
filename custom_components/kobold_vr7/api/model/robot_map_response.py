@@ -54,10 +54,10 @@ class RobotMapResponse:
     started_by: str
     robot: RobotPosition
     real_crop: CropDimensions
-    rank_crop: CropDimensions
-    processed_thumb_rank_binary: str
+    rank_crop: CropDimensions    
     processed_real_binary: str
     processed_rank_binary: str
     map_colors: MapColors
+    processed_thumb_rank_binary: str = field(default=None, repr=False)  # No aparecerá en logs
     last_modified_at: Optional[str] = None
     map_versions_count: Optional[int] = None

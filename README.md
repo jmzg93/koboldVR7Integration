@@ -19,10 +19,9 @@ This integration allows Home Assistant users to control and monitor their Kobold
 - Real-time robot status updates via WebSocket.
 - Start, pause, stop, and return-to-base commands.
 - Monitoring battery status, errors, and available commands.
-- Zone-specific and map-specific cleaning.
+- Zone-specific and map-specific cleaning (only show maps with name).
 
 ### 🚧 **Work in Progress**
-- ~~Features like **cleaning specific zones** and **cleaning entire maps** are currently under development and may not work as expected.~~ Zone-specific and map-specific cleaning now implemented!
 - As this is my first integration and my first time using Python, the code might not be the most efficient or well-structured. Your feedback and contributions are greatly appreciated!
 
 ## Features
@@ -79,10 +78,10 @@ The Kobold integration includes the following custom services:
 
 ### **`vacuum.clean_zone`**
 
-Starts cleaning a specific zone.
+Starts cleaning one or multiple specific zones (must be from the same map).
 
 - **Parameters**:
-  - `zone_uuid` (required): The UUID of the zone to clean.
+  - `zones_uuid` (required): The UUID of the zone(s) to clean. Multiple zones can be specified using comma separation (e.g., `"zone123456789,zone987654321"`).
 
 ### **`vacuum.clean_map`**
 
@@ -183,6 +182,12 @@ Have questions? Open an issue or reach out directly at [j_manuel_za@hotmail.com]
 If you encounter issues or have feature requests, feel free to open an issue on GitHub. Your feedback helps improve the integration for everyone!
 
 ## Changelog
+
+### 2.0.5 (2025-05-30)
+- Enhanced zone cleaning to support multiple zones at once via comma-separated UUIDs
+- Added validation to ensure all zones belong to the same map when cleaning multiple zones
+- Improved error handling and logging for zone cleaning
+- Updated documentation to reflect the new multi-zone cleaning capability
 
 ### 2.0.4 (2025-06-01)
 - Implemented zone-specific and map-specific cleaning features

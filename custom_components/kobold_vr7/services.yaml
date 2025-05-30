@@ -1,17 +1,17 @@
 # Servicio para limpiar una zona específica
 clean_zone:
-  name: Clean zone
-  description: Start cleaning a specific zone.
+  name: Clean zones
+  description: Start cleaning one or multiple specific zones (from the same map).
   target:
     entity:
       domain: vacuum
       integration: kobold_vr7
   fields:
-    zone_uuid:
-      name: Zone UUID
-      description: The UUID of the zone to clean
+    zones_uuid:
+      name: Zones UUID
+      description: The UUID of the zone(s) to clean, multiple zones can be specified using comma separation
       required: true
-      example: "zone123456789"
+      example: '"zone123456789" or "zone123456789,zone987654321"'
       selector:
         text:
 
