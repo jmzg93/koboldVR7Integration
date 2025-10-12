@@ -84,7 +84,10 @@ class KoboldBatterySensor(SensorEntity):
         # Nombre del sensor sin repetir el nombre del robot porque Home Assistant
         # añadirá automáticamente el nombre del dispositivo cuando
         # ``_attr_has_entity_name`` es verdadero.
-        self._attr_name = "Batería"
+        # Aunque los comentarios siguen en español para mantener la consistencia
+        # del proyecto, el nombre del sensor se define explícitamente en inglés
+        # para que Home Assistant no lo traduzca automáticamente.
+        self._attr_name = "Battery"
         self._attr_native_value = estado_robot.get("battery_level")
 
         self._actualizar_icono()
@@ -133,7 +136,9 @@ class KoboldBatterySensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Devuelve atributos adicionales del sensor."""
-        return {"cargando": self._is_charging}
+        # Atributo adicional también en inglés para evitar traducciones
+        # implícitas por parte de Home Assistant.
+        return {"charging": self._is_charging}
 
     @property
     def device_info(self) -> DeviceInfo:
