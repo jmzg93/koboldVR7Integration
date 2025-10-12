@@ -25,10 +25,10 @@ cards:
     chips:
       - type: template
         icon: mdi:battery
-        icon_color: |
-          {% set b = state_attr('vacuum.roomba','battery_level')|int(0) %}
-          {{ 'red' if b < 20 else 'amber' if b < 50 else 'green' }}
-        content: "{{ state_attr('vacuum.roomba','battery_level')|int(default=0) }}%"
+        icon_color: >
+          {% set b = states('sensor.roomba_bateria')|int(0) %} {{ 'red' if b < 20
+          else 'amber' if b < 50 else 'green' }}
+        content: "{{ states('sensor.roomba_bateria')|int(0) }}%"
       - type: action
         icon: mdi:refresh
         name: Lists
