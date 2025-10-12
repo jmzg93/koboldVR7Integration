@@ -81,7 +81,10 @@ class KoboldBatterySensor(SensorEntity):
         self._is_charging = estado_robot.get("is_charging", False)
 
         self._attr_unique_id = f"{robot.id}_battery"
-        self._attr_name = f"{robot.name} Batería"
+        # Nombre del sensor sin repetir el nombre del robot porque Home Assistant
+        # añadirá automáticamente el nombre del dispositivo cuando
+        # ``_attr_has_entity_name`` es verdadero.
+        self._attr_name = "Batería"
         self._attr_native_value = estado_robot.get("battery_level")
 
         self._actualizar_icono()
