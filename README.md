@@ -76,14 +76,14 @@ This integration allows Home Assistant users to control and monitor their Kobold
 
 The Kobold integration includes the following custom services:
 
-### **`vacuum.clean_zone`**
+### **`kobold_vr7.clean_zone`**
 
 Starts cleaning one or multiple specific zones (must be from the same map).
 
 - **Parameters**:
   - `zones_uuid` (required): The UUID of the zone(s) to clean. Multiple zones can be specified using comma separation (e.g., `"zone123456789,zone987654321"`).
 
-### **`vacuum.clean_map`**
+### **`kobold_vr7.clean_map`**
 
 Starts cleaning an entire map.
 
@@ -96,6 +96,12 @@ Starts cleaning an entire map.
 
 Once the integration is set up, entities corresponding to your Kobold robots will be added. You can interact with them via the Home Assistant dashboard or automations.
 
+### Additional Documentation
+
+- [Lovelace dashboard example](docs/lovelace-dashboard-example.md) – replicate the sample subview, automations, scripts, sensors, and helpers used to control the Kobold VR7 from Home Assistant.
+
+> **Note:** The examples reference the `vacuum.roomba` entity. Replace it with the entity exposed by your own Kobold robot before applying the configurations.
+
 ### Supported Features
 
 - **Robot Control**:
@@ -105,8 +111,8 @@ Once the integration is set up, entities corresponding to your Kobold robots wil
   - `vacuum.return_to_base`: Sends the robot to its base.
   - `vacuum.locate`: Finds the robot.
 - **Custom Services**:
-  - `vacuum.clean_zone`: Cleans a specific zone.
-  - `vacuum.clean_map`: Cleans an entire map.
+  - `kobold_vr7.clean_zone`: Cleans a specific zone.
+  - `kobold_vr7.clean_map`: Cleans an entire map.
 
 ---
 
