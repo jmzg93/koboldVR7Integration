@@ -1,5 +1,7 @@
 # Lovelace Dashboard Example for Kobold VR7
 
+![Lovelace dashboard preview](./images/lovelace-roomba-example.png)
+
 The following example shows how to build a Lovelace subview dedicated to a Kobold VR7 robot. It combines Mushroom cards, template helpers, and Home Assistant automations so you can quickly start map or zone cleanups straight from the dashboard. The layout places quick status chips on top and contextual controls underneath so you can launch map or zone cleanups while the robot is docked.
 
 > **Tip:** The configuration below assumes you are using [Mushroom cards](https://github.com/piitaya/lovelace-mushroom) and have already installed the `card-mod` custom card.
