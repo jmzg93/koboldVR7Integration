@@ -15,6 +15,9 @@ from .model.robot_wss_last_state_or_phx_reply_response import AutonomyStates, Av
     CleaningCenter, Details, Error, ResponseBody
 
 from homeassistant.components.vacuum import VacuumActivity
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+from ..const import DOMAIN, SIGNAL_ROBOT_BATTERY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -297,7 +300,6 @@ class KoboldWebSocketClient:
 
         # Actualizar la entidad
         self.entity._attr_activity = ha_activity
-        self.entity._attr_battery_level = response_body.details.charge
         self.entity._attr_status = action
 
         # Guardar estado de la bolsa
@@ -309,8 +311,26 @@ class KoboldWebSocketClient:
             self.entity._attr_available_commands = available_commands
             _LOGGER.debug("Available commands updated: %s", available_commands)
 
-        # Determinar si el robot está cargando
-        self.entity._is_charging = response_body.details.is_charging
+        # Determinar y almacenar el estado de la batería
+        details = response_body.details
+        battery_level = getattr(details, "charge", None)
+        is_charging = getattr(details, "is_charging", False)
+        self.entity._is_charging = is_charging
+
+        entry_data = self.entity.hass.data[DOMAIN][self.entity._entry_id]
+        runtime = entry_data.setdefault("runtime", {})
+        robots_state = runtime.setdefault("robots", {})
+        robot_state = robots_state.setdefault(self.entity._robot.id, {"robot": self.entity._robot})
+        robot_state["robot"] = self.entity._robot
+        robot_state["battery_level"] = battery_level
+        robot_state["is_charging"] = is_charging
+
+        async_dispatcher_send(
+            self.entity.hass,
+            f"{SIGNAL_ROBOT_BATTERY}_{self.entity._robot.id}",
+            battery_level,
+            is_charging,
+        )
 
         # Confirmar los cambios de estado a Home Assistant
         self.entity.async_write_ha_state()
