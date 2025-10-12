@@ -1,8 +1,6 @@
 import asyncio
 import logging
-from typing import AnyStr, Any
-
-from homeassistant.helpers.icon import icon_for_battery_level
+from typing import Any
 from homeassistant.components.vacuum import (
     StateVacuumEntity,
     VacuumEntityFeature,
@@ -13,10 +11,11 @@ import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.entity import DeviceInfo
 
 from .service.model.map_with_zones import MapWithZones
 from .service.websocket_service import WebSocketService
-from .const import DOMAIN, CONF_EMAIL, CONF_ID_TOKEN
+from .const import DOMAIN, CONF_ID_TOKEN
 from .service.robot_service import RobotsService
 from .api.robots_api_client import RobotsApiClient
 from .api.websocket_client import KoboldWebSocketClient
@@ -31,19 +30,23 @@ SERVICE_CLEAN_MAP = 'clean_map'
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Configura la entidad de aspiradora basada en una entrada de configuración."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    email = data[CONF_EMAIL]
-    id_token = data[CONF_ID_TOKEN]
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    config = entry_data["config"]
+    runtime = entry_data.setdefault("runtime", {})
 
-    # Usar la función importada directamente
-    session = async_get_clientsession(hass)
-    robots_api_client = RobotsApiClient(
-        session, token=id_token, host=ORBITAL_HOST
-    )
-    robots_service = RobotsService(robots_api_client)
+    id_token = config[CONF_ID_TOKEN]
 
-    # Obtener los robots
+    robots_service = runtime.get("robots_service")
+    if not robots_service:
+        session = async_get_clientsession(hass)
+        robots_api_client = RobotsApiClient(
+            session, token=id_token, host=ORBITAL_HOST
+        )
+        robots_service = RobotsService(robots_api_client)
+        runtime["robots_service"] = robots_service
+
     robots = await robots_service.get_all_robots(id_token)
+    robots_state = runtime.setdefault("robots", {})
 
     entities = []
 
@@ -70,8 +73,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
             _LOGGER.info(f"No maps found for robot {robot.id}, continuing without maps")
             
         # Siempre añadimos la entidad, incluso sin mapas o zonas
+        robot_state = robots_state.setdefault(robot.id, {})
+        robot_state["robot"] = robot
+        robot_state.setdefault("battery_level", None)
+        robot_state.setdefault("is_charging", False)
+
         entities.append(KoboldVacuumEntity(
-            hass, robot, robots_service, id_token, map_with_zones_list))
+            hass, entry.entry_id, robot, robots_service, id_token, map_with_zones_list))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -103,8 +111,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class KoboldVacuumEntity(StateVacuumEntity):
     """Representa una aspiradora Kobold."""
 
-    def __init__(self, hass, robot, robots_service, id_token, map_with_zones_list):
+    def __init__(self, hass, entry_id, robot, robots_service, id_token, map_with_zones_list):
         self.hass = hass
+        self._entry_id = entry_id
         # Almacena los mapas y zonas del robot
         self.map_with_zones_list = map_with_zones_list
         self._robot = robot
@@ -117,7 +126,6 @@ class KoboldVacuumEntity(StateVacuumEntity):
             | VacuumEntityFeature.PAUSE
             | VacuumEntityFeature.RETURN_HOME
             | VacuumEntityFeature.STATE
-            | VacuumEntityFeature.BATTERY
             | VacuumEntityFeature.STATUS
             | VacuumEntityFeature.STOP
             # | VacuumEntityFeature.CLEAN_SPOT
@@ -128,11 +136,16 @@ class KoboldVacuumEntity(StateVacuumEntity):
 
         # Por defecto, establecemos la actividad como IDLE
         self._attr_activity = VacuumActivity.IDLE
-        self._attr_battery_level = None
         self._attr_status = None
 
         self._attr_fan_speed_list = ['auto', 'eco', 'turbo']
         self._attr_fan_speed = 'auto'
+
+        runtime = hass.data[DOMAIN][entry_id].setdefault("runtime", {})
+        robots_state = runtime.setdefault("robots", {})
+        self._robot_state = robots_state.setdefault(robot.id, {"robot": robot})
+        self._robot_state["robot"] = robot
+        self._is_charging = self._robot_state.get("is_charging", False)
 
         # Inicializar el servicio WebSocket y pasar self como entidad
         self.websocket_service = WebSocketService(
@@ -157,11 +170,6 @@ class KoboldVacuumEntity(StateVacuumEntity):
         return self._attr_activity
 
     @property
-    def battery_level(self):
-        """Devuelve el nivel de batería de la aspiradora."""
-        return self._attr_battery_level
-
-    @property
     def status(self):
         """Devuelve el estado detallado de la aspiradora."""
         if self._attr_activity == VacuumActivity.CLEANING and self.available_commands and self.available_commands.pause:
@@ -174,6 +182,19 @@ class KoboldVacuumEntity(StateVacuumEntity):
     def icon(self):
         """Define el icono predeterminado de la aspiradora."""
         return "mdi:robot-vacuum-variant"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Devuelve la información del dispositivo para enlazar sensores auxiliares."""
+        identificador = self._robot.serial or self._robot.id
+        fabricante = getattr(self._robot, 'vendor', None) or "Kobold"
+        return DeviceInfo(
+            identifiers={(DOMAIN, identificador)},
+            manufacturer=fabricante,
+            model=getattr(self._robot, 'model_name', None),
+            name=self._robot.name,
+            sw_version=getattr(self._robot, 'firmware', None),
+        )
 
     @property
     def available_commands(self):
@@ -189,18 +210,6 @@ class KoboldVacuumEntity(StateVacuumEntity):
     def bag_status(self):
         """Devuelve el estado de la bolsa de la aspiradora."""
         return getattr(self, "_attr_bag_status", None)
-
-    @property
-    def battery_icon(self):
-        """Devuelve el icono de la batería según el estado de carga."""
-        if self._attr_battery_level is not None:
-            # Si el robot está cargando, usar un icono diferente
-            # Esto debe derivarse de los datos WebSocket
-            if getattr(self, "_is_charging", False):
-                return "mdi:battery-charging"
-            # De lo contrario, usar el icono predeterminado basado en el nivel de batería
-            return icon_for_battery_level(self._attr_battery_level)
-        return "mdi:battery-unknown"
 
     @property
     def extra_state_attributes(self):

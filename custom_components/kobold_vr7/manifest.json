@@ -1,13 +1,21 @@
 {
   "domain": "kobold_vr7",
   "name": "Kobold VR7 Vacuum",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "documentation": "https://github.com/jmzg93/koboldHAIntegration",
   "dependencies": [],
-  "codeowners": ["@jmzg93"],
-  "requirements": ["aiohttp", "websockets"],
+  "codeowners": [
+    "@jmzg93"
+  ],
+  "requirements": [
+    "aiohttp",
+    "websockets"
+  ],
   "iot_class": "cloud_push",
-  "platforms": ["vacuum"],
+  "platforms": [
+    "vacuum",
+    "sensor"
+  ],
   "config_flow": true,
   "homeassistant": "2025.5.0"
 }
