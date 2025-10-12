@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -97,7 +98,18 @@ class KoboldBatterySensor(SensorEntity):
         )
 
     def _procesar_actualizacion_bateria(self, nivel: int | None, cargando: bool):
-        """Actualiza el estado de la batería en respuesta a una señal."""
+        """Programa una actualización segura para el hilo principal."""
+        self.hass.loop.call_soon_threadsafe(
+            self._actualizar_estado_desde_evento,
+            nivel,
+            cargando,
+        )
+
+    @callback
+    def _actualizar_estado_desde_evento(
+        self, nivel: int | None, cargando: bool
+    ) -> None:
+        """Actualiza el estado de la batería en el bucle de eventos."""
         self._robot_state["battery_level"] = nivel
         self._robot_state["is_charging"] = cargando
         self._attr_native_value = nivel
