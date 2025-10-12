@@ -189,6 +189,12 @@ If you encounter issues or have feature requests, feel free to open an issue on 
 
 ## Changelog
 
+### 2.0.6 (2025-06-02)
+- Added a dedicated battery sensor entity for each Kobold robot with shared device information
+- Removed the deprecated battery attribute from the vacuum entity while keeping the state synchronized
+- Ensured battery updates run on the Home Assistant event loop to avoid thread-safety issues
+- Simplified battery sensor naming to avoid repeating the robot name in generated entity IDs
+
 ### 2.0.5 (2025-05-30)
 - Enhanced zone cleaning to support multiple zones at once via comma-separated UUIDs
 - Added validation to ensure all zones belong to the same map when cleaning multiple zones
