@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import asdict, is_dataclass
 from typing import Any
 from homeassistant.components.vacuum import (
     StateVacuumEntity,
@@ -219,30 +220,46 @@ class KoboldVacuumEntity(StateVacuumEntity):
         if self.map_with_zones_list:
             # 1) map_names: map_id → map_name
             attributes['maps'] = {}
-            # 2) zones: map_name → lista de zonas
+            # Información completa del mapa para quien la necesite
+            attributes['map_details'] = {}
+            # 2) zones: map_id → {map_name, zones: []}
             attributes['zones'] = {}
 
             for mwz in self.map_with_zones_list:
                 mapa = mwz.map
-                # solo si existe floorplan_uuid y nombre
-                if not (mapa and hasattr(mapa, 'floorplan_uuid') and getattr(mapa, 'name', None)):
+                # Necesitamos al menos el floorplan_uuid para identificar el mapa
+                if not (mapa and hasattr(mapa, 'floorplan_uuid')):
                     continue
 
                 map_id = mapa.floorplan_uuid
-                map_name = mapa.name
+                # Si el nombre viene vacío usamos el propio UUID
+                map_name = getattr(mapa, 'name', None) or map_id
 
-                # 1) relleno map_names
+                # 1) relleno map_names (compatibilidad con usos actuales)
                 attributes['maps'][map_id] = map_name
 
-                # 2) relleno zones bajo map_name
+                # Guardamos una versión completa del mapa para depuración o automatizaciones avanzadas
+                if is_dataclass(mapa):
+                    attributes['map_details'][map_id] = asdict(mapa)
+                else:
+                    attributes['map_details'][map_id] = getattr(mapa, '__dict__', mapa)
+
+                # 2) rellenamos zones bajo map_id manteniendo el nombre dentro
                 zone_list: list[dict[str, Any]] = []
                 for zone in getattr(mwz, 'zones', []) or []:
                     z = {'zone_uuid': zone.track_uuid}
-                    if hasattr(zone, 'name'):
+                    if hasattr(zone, 'name') and zone.name:
                         z['name'] = zone.name
+                    if is_dataclass(zone):
+                        z['data'] = asdict(zone)
+                    else:
+                        z['data'] = getattr(zone, '__dict__', zone)
                     zone_list.append(z)
 
-                attributes['zones'][map_name] = zone_list
+                attributes['zones'][map_id] = {
+                    'map_name': map_name,
+                    'zones': zone_list,
+                }
 
         return attributes
 
