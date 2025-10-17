@@ -217,28 +217,29 @@ class KoboldVacuumEntity(StateVacuumEntity):
         attributes: dict[str, Any] = {}
 
         if self.map_with_zones_list:
-            # 1) map_names: map_id → map_name
+            # 1) maps: map_id → map_name
             attributes['maps'] = {}
             # 2) zones: map_name → lista de zonas
             attributes['zones'] = {}
 
             for mwz in self.map_with_zones_list:
                 mapa = mwz.map
-                # solo si existe floorplan_uuid y nombre
-                if not (mapa and hasattr(mapa, 'floorplan_uuid') and getattr(mapa, 'name', None)):
+                # Necesitamos al menos el floorplan_uuid para identificar el mapa
+                if not (mapa and hasattr(mapa, 'floorplan_uuid')):
                     continue
 
                 map_id = mapa.floorplan_uuid
-                map_name = mapa.name
+                # Si el nombre viene vacío mostramos el UUID para no perder el mapa
+                map_name = getattr(mapa, 'name', None) or map_id
 
-                # 1) relleno map_names
+                # 1) rellenamos maps con todos los mapas disponibles
                 attributes['maps'][map_id] = map_name
 
-                # 2) relleno zones bajo map_name
+                # 2) rellenamos zones usando el nombre visible
                 zone_list: list[dict[str, Any]] = []
                 for zone in getattr(mwz, 'zones', []) or []:
                     z = {'zone_uuid': zone.track_uuid}
-                    if hasattr(zone, 'name'):
+                    if getattr(zone, 'name', None):
                         z['name'] = zone.name
                     zone_list.append(z)
 
