@@ -6,7 +6,7 @@ import ssl
 import os
 from typing import Dict
 import websockets
-from aiohttp import ClientSession, WSMsgType, ClientError
+from aiohttp import ClientSession, WSMsgType, ClientError, ClientResponseError
 
 from websockets.exceptions import ConnectionClosed
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
@@ -157,26 +157,54 @@ class KoboldWebSocketClient:
             try:
                 # Usar el contexto SSL global pre-creado
                 if self._use_phoenix_protocol:
+                    _LOGGER.debug(
+                        "Intentando conectar usando protocolo Phoenix en %s",
+                        self._url,
+                    )
                     self.websocket = await websockets.connect(
                         self._url,
                         ssl=_SSL_CONTEXT,
                     )
                 else:
                     headers = self._build_headers()
+                    self._log_connection_headers(headers)
                     if self._session is None or self._session.closed:
                         # Reutilizamos la sesión para evitar fugas de sockets
                         self._session = ClientSession()
+                    _LOGGER.debug(
+                        "Intentando conectar con Companion en %s",
+                        self._url,
+                    )
                     self.websocket = await self._session.ws_connect(
                         self._url,
                         ssl=_SSL_CONTEXT,
                         headers=headers,
                     )
                 self.connected = True
-                _LOGGER.debug("Conectado al WebSocket")
+                if not self._use_phoenix_protocol and self.websocket.response:
+                    _LOGGER.debug(
+                        "Conexión Companion establecida. Código: %s, cabeceras: %s",
+                        self.websocket.response.status,
+                        dict(self.websocket.response.headers),
+                    )
+                else:
+                    _LOGGER.debug("Conectado al WebSocket")
                 if self._use_phoenix_protocol:
                     await self._join_robot_channel()
                 self._listen_task = self.hass.loop.create_task(self._listen())
                 break  # Salir del bucle al conectar exitosamente
+            except ClientResponseError as e:
+                _LOGGER.error(
+                    "Error HTTP al conectar al WebSocket Companion: %s %s",
+                    e.status,
+                    e.message,
+                )
+                if e.headers:
+                    _LOGGER.debug("Cabeceras de respuesta: %s", dict(e.headers))
+                self.connected = False
+                _LOGGER.info("Reconectando en %s segundos...", retry_delay)
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, max_delay)
             except Exception as e:
                 _LOGGER.error("Error al conectar al WebSocket: %s", e)
                 self.connected = False
@@ -376,6 +404,27 @@ class KoboldWebSocketClient:
         headers["Accept-Language"] = language
 
         return headers
+
+    def _log_connection_headers(self, headers: Dict[str, str]):
+        """Registra las cabeceras usadas durante la conexión ocultando datos sensibles."""
+        headers_mostrados = dict(headers)
+        if "Authorization" in headers_mostrados:
+            headers_mostrados["Authorization"] = self._mask_token(
+                headers_mostrados["Authorization"]
+            )
+        _LOGGER.debug("Cabeceras de conexión: %s", headers_mostrados)
+
+    @staticmethod
+    def _mask_token(valor: str) -> str:
+        """Oculta la mayor parte de un token para fines de logging."""
+        if not valor:
+            return valor
+        if valor.lower().startswith("bearer "):
+            prefijo, token = valor.split(" ", 1)
+            return f"{prefijo} {KoboldWebSocketClient._mask_token(token)}"
+        if len(valor) <= 10:
+            return "***"
+        return f"{valor[:5]}...{valor[-5:]}"
 
     async def _handle_phx_reply(self, payload):
         if "response" in payload and "body" in payload["response"]:
