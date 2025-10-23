@@ -19,6 +19,7 @@ from homeassistant.components.vacuum import VacuumActivity
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from ..const import DOMAIN, SIGNAL_ROBOT_BATTERY
+from .companion_api_client import CompanionApiClient, _DEFAULT_DEVICE_TOKEN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -112,7 +113,6 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
 # Crear un contexto SSL una sola vez para toda la aplicación
 # Esta operación bloqueante se realiza al importar el módulo, no dentro del bucle de eventos
 _SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-_DEFAULT_DEVICE_TOKEN = "dUpdkdKaS6u5wptzZkTVH6:APA91bFkznZLRKgzDOi8qnw"
 
 class KoboldWebSocketClient:
     def __init__(self, hass, token, robot_id, entity):
@@ -125,6 +125,7 @@ class KoboldWebSocketClient:
         self._session = None
         self._companion_token = None
         self._companion_base_url = None
+        self._companion_api = None
 
         url_template = os.environ.get(
             "KOBOLD_WS_URL",
@@ -156,6 +157,17 @@ class KoboldWebSocketClient:
         self._reconnect_task = None  # Tarea para los intentos de reconexión
         self._should_reconnect = True
 
+    def _obtener_idioma(self) -> str:
+        """Obtiene el idioma configurado en Home Assistant."""
+        language = getattr(self.hass.config, "language", None)
+        return language or "es-ES"
+
+    def _ensure_session(self) -> ClientSession:
+        """Garantiza que existe una sesión HTTP reutilizable."""
+        if self._session is None or self._session.closed:
+            self._session = ClientSession()
+        return self._session
+
     async def connect(self):
         retry_delay = 1  # Comenzar con 1 segundo de retraso
         max_delay = 300  # Retraso máximo de 5 minutos
@@ -172,26 +184,24 @@ class KoboldWebSocketClient:
                         ssl=_SSL_CONTEXT,
                     )
                 else:
-                    if self._session is None or self._session.closed:
-                        # Reutilizamos la sesión para evitar fugas de sockets
-                        self._session = ClientSession()
+                    session = self._ensure_session()
                     headers = await self._build_headers()
                     self._log_connection_headers(headers)
                     _LOGGER.debug(
                         "Intentando conectar con Companion en %s",
                         self._url,
                     )
-                    self.websocket = await self._session.ws_connect(
+                    self.websocket = await session.ws_connect(
                         self._url,
                         ssl=_SSL_CONTEXT,
                         headers=headers,
                     )
                 self.connected = True
-                if not self._use_phoenix_protocol and self.websocket.response:
+                if not self._use_phoenix_protocol:
                     _LOGGER.debug(
                         "Conexión Companion establecida. Código: %s, cabeceras: %s",
-                        self.websocket.response.status,
-                        dict(self.websocket.response.headers),
+                        self.websocket.status,
+                        self._sanitizar_cabeceras(dict(self.websocket.headers)),
                     )
                 else:
                     _LOGGER.debug("Conectado al WebSocket")
@@ -412,8 +422,7 @@ class KoboldWebSocketClient:
             "mobile-app-os-version": "11",
         }
 
-        language = getattr(self.hass.config, "language", None) or "es-ES"
-        headers["Accept-Language"] = language
+        headers["Accept-Language"] = self._obtener_idioma()
 
         return headers
 
@@ -424,21 +433,7 @@ class KoboldWebSocketClient:
     @staticmethod
     def _mask_token(valor: str) -> str:
         """Oculta la mayor parte de un token para fines de logging."""
-        if not valor:
-            return valor
-        if valor.lower().startswith("bearer "):
-            prefijo, token = valor.split(" ", 1)
-            return f"{prefijo} {KoboldWebSocketClient._mask_token(token)}"
-        if valor.lower().startswith("auth0bearer"):
-            prefijo = "Auth0Bearer"
-            token = valor[len(prefijo):]
-            token = token.lstrip(" :")
-            if not token:
-                return prefijo
-            return f"{prefijo} {KoboldWebSocketClient._mask_token(token)}"
-        if len(valor) <= 10:
-            return "***"
-        return f"{valor[:5]}...{valor[-5:]}"
+        return CompanionApiClient._mask_token(valor)
 
     def _sanitizar_cabeceras(self, headers: Dict[str, str]) -> Dict[str, str]:
         """Devuelve una copia de las cabeceras con los valores sensibles ofuscados."""
@@ -487,63 +482,20 @@ class KoboldWebSocketClient:
             _LOGGER.debug("Base Companion no disponible; se omite la renovación del token")
             return
 
-        if self._session is None or self._session.closed:
-            self._session = ClientSession()
-
-        url = f"{self._companion_base_url}/api/v1/profile/login"
-        headers = {
-            "Authorization": f"Bearer {self._id_token}",
-            "User-Agent": "okhttp/5.1.0",
-            "mobile-app-version": "3.12.1",
-            "mobile-app-build": "40408",
-            "mobile-app-os": "android",
-            "mobile-app-os-version": "11",
-        }
-
-        language = getattr(self.hass.config, "language", None) or "es-ES"
-        headers["Accept-Language"] = language
-
+        session = self._ensure_session()
+        language = self._obtener_idioma()
         device_token = os.environ.get("KOBOLD_DEVICE_TOKEN", _DEFAULT_DEVICE_TOKEN)
-        if device_token:
-            headers["x-vrwk-mykobold-device-token"] = device_token
 
-        _LOGGER.debug("Solicitando token Companion en %s", url)
-        _LOGGER.debug("Cabeceras de login Companion: %s", self._sanitizar_cabeceras(headers))
+        self._companion_api = CompanionApiClient(
+            session=session,
+            base_url=self._companion_base_url,
+            language=language,
+            device_token=device_token,
+            logger=_LOGGER,
+        )
 
         try:
-            async with self._session.post(url, headers=headers) as response:
-                if response.status != 200:
-                    texto_error = await response.text()
-                    _LOGGER.error(
-                        "Error al renovar el token Companion: %s %s",
-                        response.status,
-                        texto_error,
-                    )
-                    if response.status == 401:
-                        self._companion_token = None
-                    response.raise_for_status()
-                else:
-                    await response.read()
-
-                bearer = response.headers.get("Authorization")
-                if not bearer:
-                    _LOGGER.error(
-                        "Respuesta de Companion sin cabecera Authorization: %s",
-                        self._sanitizar_cabeceras(dict(response.headers)),
-                    )
-                    self._companion_token = None
-                    raise RuntimeError(
-                        "La respuesta de profile/login no incluye Authorization"
-                    )
-
-                if bearer.lower().startswith("bearer "):
-                    bearer = bearer.split(" ", 1)[1]
-
-                self._companion_token = bearer
-                _LOGGER.debug(
-                    "Token Companion obtenido correctamente. Cabeceras respuesta: %s",
-                    self._sanitizar_cabeceras(dict(response.headers)),
-                )
+            self._companion_token = await self._companion_api.login(self._id_token)
         except ClientResponseError as error:
             if error.status == 401:
                 self._companion_token = None
