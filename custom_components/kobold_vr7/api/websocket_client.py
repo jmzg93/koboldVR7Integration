@@ -77,10 +77,10 @@ def _parse_response_body(body: Dict) -> ResponseBody:
 
 
 def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
-    code = payload["code"]
-    body = payload["body"]
+    code = payload.get("code", 0)
+    body = payload.get("body", {})
     runs = []
-    for run_data in body["runs"]:
+    for run_data in body.get("runs", []):
         settings = RunSettings(**run_data["settings"])
         stats = RunStats(**run_data["stats"])
         timing = RunTiming(**run_data["timing"])
@@ -120,7 +120,31 @@ class KoboldWebSocketClient:
         self.entity = entity  # Agrega la entidad aquí
         self.websocket = None
         self.connected = False
-        self._url = f"wss://orbital.ksecosys.com/socket/websocket?vsn=2.0.0&token={self.token}&vendor=vorwerk"
+
+        url_template = os.environ.get(
+            "KOBOLD_WS_URL",
+            "wss://api-2-prod.companion.kobold.vorwerk.com/api/ws",
+        )
+
+        if "{token}" in url_template:
+            self._url = url_template.format(token=self.token)
+        else:
+            self._url = url_template
+
+        # Detectamos si seguimos usando el protocolo antiguo de Phoenix
+        self._use_phoenix_protocol = "socket/websocket" in self._url
+
+        if self._use_phoenix_protocol:
+            if "token=" not in self._url:
+                separador = "&" if "?" in self._url else "?"
+                self._url = f"{self._url}{separador}token={self.token}"
+            if "vendor=" not in self._url:
+                separador = "&" if "?" in self._url else "?"
+                self._url = f"{self._url}{separador}vendor=vorwerk"
+            if "vsn=" not in self._url:
+                separador = "&" if "?" in self._url else "?"
+                self._url = f"{self._url}{separador}vsn=2.0.0"
+
         self._listen_task = None
         self._reconnect_task = None  # Tarea para los intentos de reconexión
         self._should_reconnect = True
@@ -131,13 +155,16 @@ class KoboldWebSocketClient:
         while self._should_reconnect:
             try:
                 # Usar el contexto SSL global pre-creado
+                headers = self._build_headers()
                 self.websocket = await websockets.connect(
                     self._url,
-                    ssl=_SSL_CONTEXT
+                    ssl=_SSL_CONTEXT,
+                    extra_headers=headers,
                 )
                 self.connected = True
                 _LOGGER.debug("Conectado al WebSocket")
-                await self._join_robot_channel()
+                if self._use_phoenix_protocol:
+                    await self._join_robot_channel()
                 self._listen_task = self.hass.loop.create_task(self._listen())
                 break  # Salir del bucle al conectar exitosamente
             except Exception as e:
@@ -208,25 +235,120 @@ class KoboldWebSocketClient:
 
     async def _handle_message(self, message):
         _LOGGER.debug("Received message: %s", message)
-        data = json.loads(message)
 
-        # Verificar que el mensaje es una lista con al menos 5 elementos
-        if isinstance(data, list) and len(data) >= 5:
-            topic = data[2]
-            event = data[3]
-            payload = data[4]
+        try:
+            data = json.loads(message)
+        except json.JSONDecodeError:
+            _LOGGER.error("Mensaje WebSocket no es JSON válido: %s", message)
+            return
 
-            # Manejar el evento phx_reply
-            if event == "phx_reply":
-                await self._handle_phx_reply(payload)
-            elif event == "last_state":
-                await self._handle_last_state(payload)
-            elif event == "cleaning_state":
-                await self._handle_cleaning_state(payload)
-            else:
-                _LOGGER.debug("Unhandled event: %s", event)
+        if isinstance(data, list):
+            await self._handle_phoenix_message(data)
+        elif isinstance(data, dict):
+            await self._handle_event_message(data)
         else:
-            _LOGGER.error("Invalid message format")
+            _LOGGER.debug("Formato de mensaje WebSocket no soportado: %s", type(data))
+
+    async def _handle_phoenix_message(self, data):
+        """Maneja mensajes del protocolo antiguo basado en Phoenix."""
+        # Verificar que el mensaje es una lista con al menos 5 elementos
+        if len(data) < 5:
+            _LOGGER.error("Mensaje Phoenix inválido: %s", data)
+            return
+
+        topic = data[2]
+        event = data[3]
+        payload = data[4]
+
+        if topic != f"robots:{self.robot_id}":
+            _LOGGER.debug("Mensaje Phoenix ignorado para tópico %s", topic)
+            return
+
+        # Manejar el evento phx_reply
+        if event == "phx_reply":
+            await self._handle_phx_reply(payload)
+        elif event == "last_state":
+            await self._handle_last_state(payload)
+        elif event == "cleaning_state":
+            await self._handle_cleaning_state(payload)
+        else:
+            _LOGGER.debug("Evento Phoenix no manejado: %s", event)
+
+    async def _handle_event_message(self, data):
+        """Maneja mensajes del nuevo servicio Companion."""
+        event_type = data.get("event_type")
+        payload = data.get("payload", {}) or {}
+
+        if not event_type:
+            _LOGGER.debug("Mensaje sin tipo de evento: %s", data)
+            return
+
+        if event_type == "state_changed":
+            await self._handle_companion_state_changed(payload)
+        elif event_type == "cleaning_state":
+            await self._handle_companion_cleaning_state(payload)
+        elif event_type == "service_status":
+            _LOGGER.debug("Estado del servicio Companion: %s", payload)
+        else:
+            _LOGGER.debug("Evento Companion no manejado: %s", event_type)
+
+    async def _handle_companion_state_changed(self, payload):
+        """Procesa eventos state_changed del nuevo WebSocket."""
+        robot_id = payload.get("robot_id")
+        if robot_id and robot_id != self.robot_id:
+            _LOGGER.debug("Estado ignorado para robot %s", robot_id)
+            return
+
+        state_body = payload.get("state")
+        if not state_body:
+            _LOGGER.debug("state_changed sin estado: %s", payload)
+            return
+
+        try:
+            response_body = _parse_response_body(state_body)
+            await self.update_entity_state(response_body)
+        except Exception as e:
+            _LOGGER.error("Error procesando state_changed: %s", e)
+
+    async def _handle_companion_cleaning_state(self, payload):
+        """Procesa eventos cleaning_state del nuevo WebSocket."""
+        robot_id = payload.get("robot_id")
+        if robot_id and robot_id != self.robot_id:
+            _LOGGER.debug("Cleaning state ignorado para robot %s", robot_id)
+            return
+
+        body = payload.get("body") or payload.get("state")
+        if not body:
+            _LOGGER.debug("cleaning_state sin body: %s", payload)
+            return
+
+        try:
+            if "body" in payload:
+                payload_a_procesar = payload
+            else:
+                payload_a_procesar = {"body": body, "code": payload.get("code", 0)}
+
+            cleaning_state_response = _parse_cleaning_state_body(payload_a_procesar)
+            await self.update_cleaning_state(cleaning_state_response)
+        except Exception as e:
+            _LOGGER.error("Error procesando cleaning_state Companion: %s", e)
+
+    def _build_headers(self):
+        """Construye las cabeceras necesarias para el nuevo WebSocket."""
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "User-Agent": "okhttp/5.1.0",
+            "mobile-app-version": "3.12.1",
+            "mobile-app-build": "40408",
+            "mobile-app-os": "android",
+            "mobile-app-os-version": "11",
+        }
+
+        language = getattr(self.hass.config, "language", None)
+        if language:
+            headers["Accept-Language"] = language
+
+        return headers
 
     async def _handle_phx_reply(self, payload):
         if "response" in payload and "body" in payload["response"]:
