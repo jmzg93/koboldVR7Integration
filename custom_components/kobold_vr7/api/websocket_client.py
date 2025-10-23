@@ -4,7 +4,8 @@ import json
 import uuid
 import ssl
 import os
-from typing import Dict
+from typing import Dict, Optional
+from urllib.parse import urlparse
 import websockets
 from aiohttp import ClientSession, WSMsgType, ClientError, ClientResponseError
 
@@ -111,16 +112,19 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
 # Crear un contexto SSL una sola vez para toda la aplicación
 # Esta operación bloqueante se realiza al importar el módulo, no dentro del bucle de eventos
 _SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+_DEFAULT_DEVICE_TOKEN = "dUpdkdKaS6u5wptzZkTVH6:APA91bFkznZLRKgzDOi8qnw"
 
 class KoboldWebSocketClient:
     def __init__(self, hass, token, robot_id, entity):
         self.hass = hass
-        self.token = token
+        self._id_token = token
         self.robot_id = robot_id
         self.entity = entity  # Agrega la entidad aquí
         self.websocket = None
         self.connected = False
         self._session = None
+        self._companion_token = None
+        self._companion_base_url = None
 
         url_template = os.environ.get(
             "KOBOLD_WS_URL",
@@ -128,7 +132,7 @@ class KoboldWebSocketClient:
         )
 
         if "{token}" in url_template:
-            self._url = url_template.format(token=self.token)
+            self._url = url_template.format(token=self._id_token)
         else:
             self._url = url_template
 
@@ -138,13 +142,15 @@ class KoboldWebSocketClient:
         if self._use_phoenix_protocol:
             if "token=" not in self._url:
                 separador = "&" if "?" in self._url else "?"
-                self._url = f"{self._url}{separador}token={self.token}"
+                self._url = f"{self._url}{separador}token={self._id_token}"
             if "vendor=" not in self._url:
                 separador = "&" if "?" in self._url else "?"
                 self._url = f"{self._url}{separador}vendor=vorwerk"
             if "vsn=" not in self._url:
                 separador = "&" if "?" in self._url else "?"
                 self._url = f"{self._url}{separador}vsn=2.0.0"
+        else:
+            self._companion_base_url = self._derivar_base_http(self._url)
 
         self._listen_task = None
         self._reconnect_task = None  # Tarea para los intentos de reconexión
@@ -166,11 +172,11 @@ class KoboldWebSocketClient:
                         ssl=_SSL_CONTEXT,
                     )
                 else:
-                    headers = self._build_headers()
-                    self._log_connection_headers(headers)
                     if self._session is None or self._session.closed:
                         # Reutilizamos la sesión para evitar fugas de sockets
                         self._session = ClientSession()
+                    headers = await self._build_headers()
+                    self._log_connection_headers(headers)
                     _LOGGER.debug(
                         "Intentando conectar con Companion en %s",
                         self._url,
@@ -200,7 +206,12 @@ class KoboldWebSocketClient:
                     e.message,
                 )
                 if e.headers:
-                    _LOGGER.debug("Cabeceras de respuesta: %s", dict(e.headers))
+                    _LOGGER.debug(
+                        "Cabeceras de respuesta: %s",
+                        self._sanitizar_cabeceras(dict(e.headers)),
+                    )
+                if e.status == 401:
+                    self._companion_token = None
                 self.connected = False
                 _LOGGER.info("Reconectando en %s segundos...", retry_delay)
                 await asyncio.sleep(retry_delay)
@@ -389,10 +400,11 @@ class KoboldWebSocketClient:
         except Exception as e:
             _LOGGER.error("Error procesando cleaning_state Companion: %s", e)
 
-    def _build_headers(self):
+    async def _build_headers(self):
         """Construye las cabeceras necesarias para el nuevo WebSocket."""
+        companion_token = await self._ensure_companion_token()
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {companion_token}",
             "User-Agent": "okhttp/5.1.0",
             "mobile-app-version": "3.12.1",
             "mobile-app-build": "40408",
@@ -407,12 +419,7 @@ class KoboldWebSocketClient:
 
     def _log_connection_headers(self, headers: Dict[str, str]):
         """Registra las cabeceras usadas durante la conexión ocultando datos sensibles."""
-        headers_mostrados = dict(headers)
-        if "Authorization" in headers_mostrados:
-            headers_mostrados["Authorization"] = self._mask_token(
-                headers_mostrados["Authorization"]
-            )
-        _LOGGER.debug("Cabeceras de conexión: %s", headers_mostrados)
+        _LOGGER.debug("Cabeceras de conexión: %s", self._sanitizar_cabeceras(headers))
 
     @staticmethod
     def _mask_token(valor: str) -> str:
@@ -422,9 +429,125 @@ class KoboldWebSocketClient:
         if valor.lower().startswith("bearer "):
             prefijo, token = valor.split(" ", 1)
             return f"{prefijo} {KoboldWebSocketClient._mask_token(token)}"
+        if valor.lower().startswith("auth0bearer"):
+            prefijo = "Auth0Bearer"
+            token = valor[len(prefijo):]
+            token = token.lstrip(" :")
+            if not token:
+                return prefijo
+            return f"{prefijo} {KoboldWebSocketClient._mask_token(token)}"
         if len(valor) <= 10:
             return "***"
         return f"{valor[:5]}...{valor[-5:]}"
+
+    def _sanitizar_cabeceras(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Devuelve una copia de las cabeceras con los valores sensibles ofuscados."""
+        cabeceras = {}
+        for clave, valor in headers.items():
+            if clave.lower() == "authorization":
+                cabeceras[clave] = self._mask_token(valor)
+            else:
+                cabeceras[clave] = valor
+        return cabeceras
+
+    def _derivar_base_http(self, url: str) -> Optional[str]:
+        """Deriva la URL base HTTP/HTTPS a partir de una URL WebSocket."""
+        try:
+            parsed = urlparse(url)
+        except Exception as error:
+            _LOGGER.debug("No se pudo parsear la URL del WebSocket: %s", error)
+            return None
+
+        if not parsed.scheme or not parsed.hostname:
+            return None
+
+        if parsed.scheme not in ("ws", "wss"):
+            return None
+
+        esquema_http = "https" if parsed.scheme == "wss" else "http"
+        netloc = parsed.hostname
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+
+        return f"{esquema_http}://{netloc}"
+
+    async def _ensure_companion_token(self) -> str:
+        """Obtiene un token Companion válido, renovándolo si es necesario."""
+        if self._companion_token:
+            return self._companion_token
+
+        await self._renovar_companion_token()
+        if not self._companion_token:
+            raise RuntimeError("No se pudo obtener un token Companion para el WebSocket")
+        return self._companion_token
+
+    async def _renovar_companion_token(self):
+        """Realiza la llamada al endpoint profile/login para obtener el Bearer del WebSocket."""
+        if not self._companion_base_url:
+            _LOGGER.debug("Base Companion no disponible; se omite la renovación del token")
+            return
+
+        if self._session is None or self._session.closed:
+            self._session = ClientSession()
+
+        url = f"{self._companion_base_url}/api/v1/profile/login"
+        headers = {
+            "Authorization": f"Bearer {self._id_token}",
+            "User-Agent": "okhttp/5.1.0",
+            "mobile-app-version": "3.12.1",
+            "mobile-app-build": "40408",
+            "mobile-app-os": "android",
+            "mobile-app-os-version": "11",
+        }
+
+        language = getattr(self.hass.config, "language", None) or "es-ES"
+        headers["Accept-Language"] = language
+
+        device_token = os.environ.get("KOBOLD_DEVICE_TOKEN", _DEFAULT_DEVICE_TOKEN)
+        if device_token:
+            headers["x-vrwk-mykobold-device-token"] = device_token
+
+        _LOGGER.debug("Solicitando token Companion en %s", url)
+        _LOGGER.debug("Cabeceras de login Companion: %s", self._sanitizar_cabeceras(headers))
+
+        try:
+            async with self._session.post(url, headers=headers) as response:
+                if response.status != 200:
+                    texto_error = await response.text()
+                    _LOGGER.error(
+                        "Error al renovar el token Companion: %s %s",
+                        response.status,
+                        texto_error,
+                    )
+                    if response.status == 401:
+                        self._companion_token = None
+                    response.raise_for_status()
+                else:
+                    await response.read()
+
+                bearer = response.headers.get("Authorization")
+                if not bearer:
+                    _LOGGER.error(
+                        "Respuesta de Companion sin cabecera Authorization: %s",
+                        self._sanitizar_cabeceras(dict(response.headers)),
+                    )
+                    self._companion_token = None
+                    raise RuntimeError(
+                        "La respuesta de profile/login no incluye Authorization"
+                    )
+
+                if bearer.lower().startswith("bearer "):
+                    bearer = bearer.split(" ", 1)[1]
+
+                self._companion_token = bearer
+                _LOGGER.debug(
+                    "Token Companion obtenido correctamente. Cabeceras respuesta: %s",
+                    self._sanitizar_cabeceras(dict(response.headers)),
+                )
+        except ClientResponseError as error:
+            if error.status == 401:
+                self._companion_token = None
+            raise
 
     async def _handle_phx_reply(self, payload):
         if "response" in payload and "body" in payload["response"]:
