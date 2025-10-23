@@ -99,6 +99,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             robot,
             robots_service,
             profile_service,
+            session,
             id_token,
             map_with_zones_list,
         ))
@@ -140,6 +141,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         robot,
         robots_service,
         profile_service,
+        session,
         id_token,
         map_with_zones_list,
     ):
