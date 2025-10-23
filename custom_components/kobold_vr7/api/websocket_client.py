@@ -3,10 +3,8 @@ import logging
 import json
 import uuid
 import ssl
-import os
-from typing import Dict
+from typing import Awaitable, Callable, Dict, Optional
 import websockets
-from websockets.client import connect as websockets_connect
 
 from websockets.exceptions import ConnectionClosed
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
@@ -17,7 +15,17 @@ from .model.robot_wss_last_state_or_phx_reply_response import AutonomyStates, Av
 from homeassistant.components.vacuum import VacuumActivity
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from ..const import DOMAIN, SIGNAL_ROBOT_BATTERY
+from ..const import (
+    DOMAIN,
+    SIGNAL_ROBOT_BATTERY,
+    COMPANION_WS_URL,
+    MOBILE_APP_ACCEPT_ENCODING,
+    MOBILE_APP_BUILD,
+    MOBILE_APP_OS,
+    MOBILE_APP_OS_VERSION,
+    MOBILE_APP_USER_AGENT,
+    MOBILE_APP_VERSION,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,27 +121,43 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
 _SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
 class KoboldWebSocketClient:
-    def __init__(self, hass, token, robot_id, entity):
+    def __init__(
+        self,
+        hass,
+        id_token: str,
+        robot_id: str,
+        entity,
+        profile_login: Callable[[str], Awaitable[str]],
+        language: Optional[str] = None,
+    ):
         self.hass = hass
-        self.token = token
+        self._id_token = id_token
         self.robot_id = robot_id
         self.entity = entity  # Agrega la entidad aquí
         self.websocket = None
         self.connected = False
-        self._url = f"wss://orbital.ksecosys.com/socket/websocket?vsn=2.0.0&token={self.token}&vendor=vorwerk"
+        self._url = COMPANION_WS_URL
         self._listen_task = None
         self._reconnect_task = None  # Tarea para los intentos de reconexión
         self._should_reconnect = True
+        self._profile_login = profile_login
+        self._language_header = self._format_language(language)
+        self._authorization_header: Optional[str] = None
 
     async def connect(self):
         retry_delay = 1  # Comenzar con 1 segundo de retraso
         max_delay = 300  # Retraso máximo de 5 minutos
         while self._should_reconnect:
             try:
+                self._authorization_header = None
+                self._authorization_header = await self._profile_login(self._id_token)
+                headers = self._build_connection_headers()
+
                 # Usar el contexto SSL global pre-creado
                 self.websocket = await websockets.connect(
                     self._url,
-                    ssl=_SSL_CONTEXT
+                    ssl=_SSL_CONTEXT,
+                    extra_headers=headers,
                 )
                 self.connected = True
                 _LOGGER.debug("Conectado al WebSocket")
@@ -148,6 +172,39 @@ class KoboldWebSocketClient:
                 await asyncio.sleep(retry_delay)
                 # Backoff exponencial
                 retry_delay = min(retry_delay * 2, max_delay)
+
+    def _build_connection_headers(self) -> Dict[str, str]:
+        """Genera las cabeceras necesarias para el WebSocket."""
+
+        if not self._authorization_header:
+            raise RuntimeError("No se pudo generar la cabecera Authorization para el WebSocket")
+
+        return {
+            "Authorization": self._authorization_header,
+            "Accept-Language": self._language_header,
+            "mobile-app-version": MOBILE_APP_VERSION,
+            "mobile-app-build": MOBILE_APP_BUILD,
+            "mobile-app-os": MOBILE_APP_OS,
+            "mobile-app-os-version": MOBILE_APP_OS_VERSION,
+            "Accept-Encoding": MOBILE_APP_ACCEPT_ENCODING,
+            "User-Agent": MOBILE_APP_USER_AGENT,
+        }
+
+    def _format_language(self, language: Optional[str]) -> str:
+        """Normaliza el idioma en el formato esperado."""
+
+        if not language:
+            return "es-ES"
+
+        language = language.replace("_", "-")
+        if "-" in language:
+            parts = language.split("-")
+            return f"{parts[0].lower()}-{parts[-1].upper()}"
+
+        if len(language) == 2:
+            return f"{language.lower()}-{language.upper()}"
+
+        return language
 
     async def _join_robot_channel(self):
         # Enviar mensaje para unirse al canal del robot

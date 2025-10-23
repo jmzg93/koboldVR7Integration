@@ -15,11 +15,17 @@ from homeassistant.helpers.entity import DeviceInfo
 
 from .service.model.map_with_zones import MapWithZones
 from .service.websocket_service import WebSocketService
-from .const import DOMAIN, CONF_ID_TOKEN
+from .const import (
+    DOMAIN,
+    CONF_ID_TOKEN,
+    ORBITAL_HOST,
+    COMPANION_HOST,
+)
 from .service.robot_service import RobotsService
 from .api.robots_api_client import RobotsApiClient
 from .api.websocket_client import KoboldWebSocketClient
-from .const import ORBITAL_HOST
+from .api.profile_api_client import ProfileApiClient
+from .service.profile_service import ProfileService
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,14 +42,23 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     id_token = config[CONF_ID_TOKEN]
 
+    session = async_get_clientsession(hass)
+
     robots_service = runtime.get("robots_service")
     if not robots_service:
-        session = async_get_clientsession(hass)
         robots_api_client = RobotsApiClient(
             session, token=id_token, host=ORBITAL_HOST
         )
         robots_service = RobotsService(robots_api_client)
         runtime["robots_service"] = robots_service
+
+    profile_service = runtime.get("profile_service")
+    if not profile_service:
+        profile_api_client = ProfileApiClient(
+            session, host=COMPANION_HOST, language=hass.config.language
+        )
+        profile_service = ProfileService(profile_api_client)
+        runtime["profile_service"] = profile_service
 
     robots = await robots_service.get_all_robots(id_token)
     robots_state = runtime.setdefault("robots", {})
@@ -79,7 +94,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
         robot_state.setdefault("is_charging", False)
 
         entities.append(KoboldVacuumEntity(
-            hass, entry.entry_id, robot, robots_service, id_token, map_with_zones_list))
+            hass,
+            entry.entry_id,
+            robot,
+            robots_service,
+            profile_service,
+            id_token,
+            map_with_zones_list,
+        ))
 
     async_add_entities(entities, update_before_add=True)
 
@@ -111,13 +133,23 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class KoboldVacuumEntity(StateVacuumEntity):
     """Representa una aspiradora Kobold."""
 
-    def __init__(self, hass, entry_id, robot, robots_service, id_token, map_with_zones_list):
+    def __init__(
+        self,
+        hass,
+        entry_id,
+        robot,
+        robots_service,
+        profile_service,
+        id_token,
+        map_with_zones_list,
+    ):
         self.hass = hass
         self._entry_id = entry_id
         # Almacena los mapas y zonas del robot
         self.map_with_zones_list = map_with_zones_list
         self._robot = robot
         self._robots_service = robots_service
+        self._profile_service = profile_service
         self._id_token = id_token
         self._attr_name = robot.name
         self._attr_unique_id = robot.id
@@ -149,7 +181,14 @@ class KoboldVacuumEntity(StateVacuumEntity):
 
         # Inicializar el servicio WebSocket y pasar self como entidad
         self.websocket_service = WebSocketService(
-            KoboldWebSocketClient(hass, id_token, robot.id, self)
+            KoboldWebSocketClient(
+                hass,
+                id_token,
+                robot.id,
+                self,
+                profile_service.login,
+                hass.config.language,
+            )
         )
 
     async def async_added_to_hass(self):
