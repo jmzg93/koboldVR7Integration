@@ -39,11 +39,21 @@ class ProfileApiClient:
         url = f"{self._host}{self._path_login}"
         headers = self._build_headers(id_token)
 
-        self._logger.debug("Solicitando token de WebSocket en %s", url)
+        self._logger.debug(
+            "Solicitando token de WebSocket en %s con cabeceras %s",
+            url,
+            self._sanitize_request_headers(headers),
+        )
 
         try:
             async with self._session.post(url, headers=headers) as response:
                 response_text = await response.text()
+
+                response_headers = dict(response.headers)
+                self._logger.debug(
+                    "Cabeceras de respuesta de Companion: %s",
+                    self._sanitize_response_headers(response_headers),
+                )
 
                 if response.status != 200:
                     self._logger.error(
@@ -67,6 +77,10 @@ class ProfileApiClient:
                 self._logger.debug(
                     "Respuesta de Companion recibida correctamente: %s",
                     response_text,
+                )
+                self._logger.debug(
+                    "Cabecera Authorization recibida: %s",
+                    self._sanitize_authorization(authorization),
                 )
                 return authorization
         except aiohttp.ClientError as error:
@@ -102,3 +116,35 @@ class ProfileApiClient:
             return f"{language.lower()}-{language.upper()}"
 
         return language
+
+    def _sanitize_request_headers(self, headers: dict) -> dict:
+        """Oculta información sensible de las cabeceras antes de registrarlas."""
+
+        sanitized = headers.copy()
+        sanitized["authorization"] = self._sanitize_authorization(
+            sanitized.get("authorization")
+        )
+        return sanitized
+
+    def _sanitize_response_headers(self, headers: dict) -> dict:
+        """Oculta el token de la cabecera Authorization de la respuesta."""
+
+        sanitized = headers.copy()
+        if "Authorization" in sanitized:
+            sanitized["Authorization"] = self._sanitize_authorization(
+                sanitized.get("Authorization")
+            )
+        return sanitized
+
+    @staticmethod
+    def _sanitize_authorization(value: Optional[str]) -> Optional[str]:
+        """Devuelve el token parcialmente oculto para los logs."""
+
+        if not value:
+            return value
+
+        token = value.replace("Bearer ", "")
+        if len(token) <= 12:
+            return value
+
+        return f"Bearer {token[:6]}...{token[-4:]}"

@@ -183,6 +183,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         self.websocket_service = WebSocketService(
             KoboldWebSocketClient(
                 hass,
+                session,
                 id_token,
                 robot.id,
                 self,

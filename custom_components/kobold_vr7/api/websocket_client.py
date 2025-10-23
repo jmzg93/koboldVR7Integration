@@ -4,9 +4,8 @@ import json
 import uuid
 import ssl
 from typing import Awaitable, Callable, Dict, Optional
-import websockets
 
-from websockets.exceptions import ConnectionClosed
+import aiohttp
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
     RunSettings, RunStats, RunTiming, Run, CleaningStateBody
 from .model.robot_wss_last_state_or_phx_reply_response import AutonomyStates, AvailableCommands, \
@@ -124,6 +123,7 @@ class KoboldWebSocketClient:
     def __init__(
         self,
         hass,
+        session: aiohttp.ClientSession,
         id_token: str,
         robot_id: str,
         entity,
@@ -131,6 +131,7 @@ class KoboldWebSocketClient:
         language: Optional[str] = None,
     ):
         self.hass = hass
+        self._session = session
         self._id_token = id_token
         self.robot_id = robot_id
         self.entity = entity  # Agrega la entidad aquí
@@ -151,16 +152,31 @@ class KoboldWebSocketClient:
             try:
                 self._authorization_header = None
                 self._authorization_header = await self._profile_login(self._id_token)
+                _LOGGER.debug(
+                    "Bearer recuperado para el WebSocket: %s",
+                    self._sanitize_headers({"Authorization": self._authorization_header})
+                    .get("Authorization"),
+                )
                 headers = self._build_connection_headers()
 
+                _LOGGER.debug(
+                    "Intentando conectar al WebSocket %s con cabeceras %s",
+                    self._url,
+                    self._sanitize_headers(headers),
+                )
+
                 # Usar el contexto SSL global pre-creado
-                self.websocket = await websockets.connect(
+                self.websocket = await self._session.ws_connect(
                     self._url,
                     ssl=_SSL_CONTEXT,
-                    extra_headers=headers,
+                    headers=headers,
+                    autoping=True,
                 )
                 self.connected = True
-                _LOGGER.debug("Conectado al WebSocket")
+                _LOGGER.debug(
+                    "Conectado al WebSocket. Cabeceras de respuesta: %s",
+                    self._sanitize_headers(dict(self.websocket.response_headers)),
+                )
                 await self._join_robot_channel()
                 self._listen_task = self.hass.loop.create_task(self._listen())
                 break  # Salir del bucle al conectar exitosamente
@@ -215,7 +231,9 @@ class KoboldWebSocketClient:
             "phx_join",
             {}
         ]
-        await self.websocket.send(json.dumps(join_msg))
+        payload = json.dumps(join_msg)
+        _LOGGER.debug("Enviando mensaje de unión al canal: %s", payload)
+        await self.websocket.send_str(payload)
 
         unique_request_id = str(uuid.uuid4())
         # Enviar mensaje para solicitar el último estado
@@ -226,14 +244,34 @@ class KoboldWebSocketClient:
             "last_state",
             {"request_id": unique_request_id}
         ]
-        await self.websocket.send(json.dumps(last_state_msg))
+        last_state_payload = json.dumps(last_state_msg)
+        _LOGGER.debug("Solicitando último estado del robot: %s", last_state_payload)
+        await self.websocket.send_str(last_state_payload)
 
     async def _listen(self):
         try:
             async for message in self.websocket:
-                await self._handle_message(message)
-        except (ConnectionClosed, websockets.exceptions.WebSocketException) as e:
-            _LOGGER.warning("Conexión WebSocket cerrada: %s", e)
+                if message.type == aiohttp.WSMsgType.TEXT:
+                    await self._handle_message(message.data)
+                elif message.type == aiohttp.WSMsgType.BINARY:
+                    _LOGGER.debug(
+                        "Mensaje binario recibido (%s bytes)", len(message.data)
+                    )
+                elif message.type == aiohttp.WSMsgType.ERROR:
+                    _LOGGER.error(
+                        "Error en el WebSocket: %s", self.websocket.exception()
+                    )
+                    break
+                elif message.type in (
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.CLOSING,
+                ):
+                    _LOGGER.info("El servidor cerró la conexión WebSocket")
+                    break
+                else:
+                    _LOGGER.debug("Mensaje WebSocket no manejado: %s", message.type)
+        except aiohttp.ClientError as e:
+            _LOGGER.warning("Conexión WebSocket cerrada con error de cliente: %s", e)
             self.connected = False
             # Iniciar intento de reconexión si no se está reconectando ya
             if self._should_reconnect:
@@ -403,3 +441,22 @@ class KoboldWebSocketClient:
         if self._reconnect_task:
             self._reconnect_task.cancel()
         self.connected = False
+
+    def _sanitize_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Oculta información sensible antes de registrar cabeceras."""
+
+        sanitized = dict(headers)
+        authorization = sanitized.get("Authorization")
+        if authorization:
+            sanitized["Authorization"] = self._mask_token(authorization)
+        return sanitized
+
+    @staticmethod
+    def _mask_token(value: str) -> str:
+        """Devuelve el token parcialmente oculto para los logs."""
+
+        token = value.replace("Bearer ", "")
+        if len(token) <= 12:
+            return value
+
+        return f"Bearer {token[:6]}...{token[-4:]}"
