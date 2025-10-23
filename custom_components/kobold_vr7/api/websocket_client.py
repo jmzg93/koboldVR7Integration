@@ -6,7 +6,7 @@ import ssl
 import os
 from typing import Dict
 import websockets
-from websockets.client import connect as websockets_connect
+from aiohttp import ClientSession, WSMsgType, ClientError
 
 from websockets.exceptions import ConnectionClosed
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
@@ -120,6 +120,7 @@ class KoboldWebSocketClient:
         self.entity = entity  # Agrega la entidad aquí
         self.websocket = None
         self.connected = False
+        self._session = None
 
         url_template = os.environ.get(
             "KOBOLD_WS_URL",
@@ -155,12 +156,21 @@ class KoboldWebSocketClient:
         while self._should_reconnect:
             try:
                 # Usar el contexto SSL global pre-creado
-                headers = self._build_headers()
-                self.websocket = await websockets.connect(
-                    self._url,
-                    ssl=_SSL_CONTEXT,
-                    extra_headers=headers,
-                )
+                if self._use_phoenix_protocol:
+                    self.websocket = await websockets.connect(
+                        self._url,
+                        ssl=_SSL_CONTEXT,
+                    )
+                else:
+                    headers = self._build_headers()
+                    if self._session is None or self._session.closed:
+                        # Reutilizamos la sesión para evitar fugas de sockets
+                        self._session = ClientSession()
+                    self.websocket = await self._session.ws_connect(
+                        self._url,
+                        ssl=_SSL_CONTEXT,
+                        headers=headers,
+                    )
                 self.connected = True
                 _LOGGER.debug("Conectado al WebSocket")
                 if self._use_phoenix_protocol:
@@ -200,9 +210,25 @@ class KoboldWebSocketClient:
 
     async def _listen(self):
         try:
-            async for message in self.websocket:
-                await self._handle_message(message)
-        except (ConnectionClosed, websockets.exceptions.WebSocketException) as e:
+            if self._use_phoenix_protocol:
+                async for message in self.websocket:
+                    await self._handle_message(message)
+            else:
+                async for ws_message in self.websocket:
+                    if ws_message.type == WSMsgType.TEXT:
+                        await self._handle_message(ws_message.data)
+                    elif ws_message.type == WSMsgType.BINARY:
+                        try:
+                            texto = ws_message.data.decode("utf-8")
+                        except UnicodeDecodeError:
+                            _LOGGER.warning("Mensaje binario no decodificable recibido del Companion")
+                            continue
+                        await self._handle_message(texto)
+                    elif ws_message.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.CLOSED):
+                        break
+                    elif ws_message.type == WSMsgType.ERROR:
+                        raise ws_message.data or RuntimeError("Error en WebSocket Companion")
+        except (ConnectionClosed, websockets.exceptions.WebSocketException, ClientError) as e:
             _LOGGER.warning("Conexión WebSocket cerrada: %s", e)
             self.connected = False
             # Iniciar intento de reconexión si no se está reconectando ya
@@ -228,6 +254,8 @@ class KoboldWebSocketClient:
                 await self.websocket.close()
             except Exception:
                 pass
+            finally:
+                self.websocket = None
         # Esperar antes de reconectar
         # Puedes ajustar este tiempo según sea necesario
         await asyncio.sleep(5)
@@ -344,9 +372,8 @@ class KoboldWebSocketClient:
             "mobile-app-os-version": "11",
         }
 
-        language = getattr(self.hass.config, "language", None)
-        if language:
-            headers["Accept-Language"] = language
+        language = getattr(self.hass.config, "language", None) or "es-ES"
+        headers["Accept-Language"] = language
 
         return headers
 
@@ -463,8 +490,11 @@ class KoboldWebSocketClient:
         self._should_reconnect = False  # Detener intentos de reconexión
         if self.websocket:
             await self.websocket.close()
+            self.websocket = None
         if self._listen_task:
             self._listen_task.cancel()
         if self._reconnect_task:
             self._reconnect_task.cancel()
+        if self._session and not self._session.closed:
+            await self._session.close()
         self.connected = False
