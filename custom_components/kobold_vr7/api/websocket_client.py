@@ -163,10 +163,14 @@ class KoboldWebSocketClient:
         self._url = COMPANION_WS_URL
         self._listen_task = None
         self._reconnect_task = None  # Tarea para los intentos de reconexión
+        self._heartbeat_task: Optional[asyncio.Task] = None
         self._should_reconnect = True
         self._profile_login = profile_login
         self._language_header = self._format_language(language)
         self._authorization_header: Optional[str] = None
+        self._ref_counter = 0
+        self._join_ref: Optional[str] = None
+        self._heartbeat_interval = 30  # Intervalo en segundos entre heartbeats
 
     async def connect(self):
         retry_delay = 1  # Comenzar con 1 segundo de retraso
@@ -205,6 +209,7 @@ class KoboldWebSocketClient:
                     self._sanitize_headers(response_headers),
                 )
                 await self._join_robot_channel()
+                self._start_heartbeat()
                 self._listen_task = self.hass.loop.create_task(self._listen())
                 break  # Salir del bucle al conectar exitosamente
             except Exception as e:
@@ -251,9 +256,11 @@ class KoboldWebSocketClient:
 
     async def _join_robot_channel(self):
         # Enviar mensaje para unirse al canal del robot
+        self._ref_counter = 0
+        self._join_ref = self._next_ref()
         join_msg = [
-            "6",
-            "6",
+            self._join_ref,
+            self._next_ref(),
             f"robots:{self.robot_id}",
             "phx_join",
             {}
@@ -265,8 +272,8 @@ class KoboldWebSocketClient:
         unique_request_id = str(uuid.uuid4())
         # Enviar mensaje para solicitar el último estado
         last_state_msg = [
-            "6",
-            "8",
+            self._join_ref,
+            self._next_ref(),
             f"robots:{self.robot_id}",
             "last_state",
             {"request_id": unique_request_id}
@@ -274,6 +281,42 @@ class KoboldWebSocketClient:
         last_state_payload = json.dumps(last_state_msg)
         _LOGGER.debug("Solicitando último estado del robot: %s", last_state_payload)
         await self.websocket.send_str(last_state_payload)
+
+    def _start_heartbeat(self) -> None:
+        """Inicia el envío periódico de heartbeats Phoenix."""
+
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            return
+
+        async def _heartbeat_loop():
+            try:
+                while self.connected and self.websocket and not self.websocket.closed:
+                    await asyncio.sleep(self._heartbeat_interval)
+                    await self._send_heartbeat()
+            except asyncio.CancelledError:
+                _LOGGER.debug("Tarea de heartbeat cancelada")
+                raise
+            except Exception as error:
+                _LOGGER.warning("Error enviando heartbeat: %s", error)
+
+        self._heartbeat_task = self.hass.loop.create_task(_heartbeat_loop())
+
+    async def _send_heartbeat(self) -> None:
+        """Envía un heartbeat Phoenix para mantener la conexión viva."""
+
+        if not self.websocket or self.websocket.closed:
+            return
+
+        heartbeat_msg = [
+            None,
+            self._next_ref(),
+            "phoenix",
+            "heartbeat",
+            {},
+        ]
+        payload = json.dumps(heartbeat_msg)
+        _LOGGER.debug("Enviando heartbeat: %s", payload)
+        await self.websocket.send_str(payload)
 
     async def _listen(self):
         try:
@@ -299,20 +342,16 @@ class KoboldWebSocketClient:
                     _LOGGER.debug("Mensaje WebSocket no manejado: %s", message.type)
         except aiohttp.ClientError as e:
             _LOGGER.warning("Conexión WebSocket cerrada con error de cliente: %s", e)
-            self.connected = False
-            # Iniciar intento de reconexión si no se está reconectando ya
-            if self._should_reconnect:
-                if self._reconnect_task is None or self._reconnect_task.done():
-                    self._reconnect_task = self.hass.loop.create_task(
-                        self._reconnect())
+        except asyncio.CancelledError:
+            _LOGGER.debug("Escucha del WebSocket cancelada")
+            raise
         except Exception as e:
             _LOGGER.error("Error en _listen: %s", e)
+        finally:
             self.connected = False
-            # Iniciar intento de reconexión si no se está reconectando ya
+            await self._stop_heartbeat()
             if self._should_reconnect:
-                if self._reconnect_task is None or self._reconnect_task.done():
-                    self._reconnect_task = self.hass.loop.create_task(
-                        self._reconnect())
+                self._schedule_reconnect()
 
     async def _reconnect(self):
         """Intentar reconectar el WebSocket."""
@@ -327,6 +366,15 @@ class KoboldWebSocketClient:
         # Puedes ajustar este tiempo según sea necesario
         await asyncio.sleep(5)
         await self.connect()
+
+    def _schedule_reconnect(self) -> None:
+        """Programa un intento de reconexión si no existe uno activo."""
+
+        if not self._should_reconnect:
+            return
+
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = self.hass.loop.create_task(self._reconnect())
 
     async def _handle_message(self, message):
         _LOGGER.debug("Received message: %s", message)
@@ -552,7 +600,19 @@ class KoboldWebSocketClient:
             self._listen_task.cancel()
         if self._reconnect_task:
             self._reconnect_task.cancel()
+        await self._stop_heartbeat()
         self.connected = False
+
+    async def _stop_heartbeat(self) -> None:
+        """Detiene la tarea de heartbeats si está activa."""
+
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        self._heartbeat_task = None
 
     def _describe_error(self, error: Error) -> str:
         """Convierte un código de error en una descripción legible."""
@@ -600,3 +660,9 @@ class KoboldWebSocketClient:
             return value
 
         return f"Bearer {token[:6]}...{token[-4:]}"
+
+    def _next_ref(self) -> str:
+        """Genera un identificador incremental para los mensajes Phoenix."""
+
+        self._ref_counter += 1
+        return str(self._ref_counter)
