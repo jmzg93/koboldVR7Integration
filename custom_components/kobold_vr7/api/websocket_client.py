@@ -83,33 +83,55 @@ def _parse_response_body(body: Dict) -> ResponseBody:
     return response_body
 
 
+_RUN_TIMING_DEFAULTS = {
+    "charging": 0,
+    "end": "",
+    "error": 0,
+    "paused": 0,
+    "start": "",
+}
+
+
 def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
-    code = payload["code"]
-    body = payload["body"]
+    """Normaliza la estructura de los mensajes cleaning_state."""
+
+    # Los eventos JSON planos incluyen la información en "state"
+    # mientras que los mensajes Phoenix la envían en "body" junto al código.
+    body_source = payload.get("body") or payload.get("state") or {}
+    code = payload.get("code", 200)
+
     runs = []
-    for run_data in body["runs"]:
-        settings = RunSettings(**run_data["settings"])
-        stats = RunStats(**run_data["stats"])
-        timing = RunTiming(**run_data["timing"])
+    for run_data in body_source.get("runs", []) or []:
+        settings_data = run_data.get("settings", {})
+        settings = RunSettings(
+            mode=settings_data.get("mode", ""),
+            navigation_mode=settings_data.get("navigation_mode", ""),
+        )
+        stats_data = run_data.get("stats", {})
+        stats = RunStats(
+            area=stats_data.get("area", 0.0),
+            pickup_count=stats_data.get("pickup_count", 0),
+        )
+        timing = RunTiming(**{**_RUN_TIMING_DEFAULTS, **(run_data.get("timing") or {})})
         run = Run(
             settings=settings,
-            state=run_data["state"],
+            state=run_data.get("state", ""),
             stats=stats,
             timing=timing,
             track_name=run_data.get("track_name"),
-            track_uuid=run_data.get("track_uuid")
+            track_uuid=run_data.get("track_uuid"),
         )
         runs.append(run)
 
-    timing = RunTiming(**body["timing"])
+    timing = RunTiming(**{**_RUN_TIMING_DEFAULTS, **(body_source.get("timing") or {})})
 
     cleaning_state_body = CleaningStateBody(
-        ability=body["ability"],
-        cleaning_type=body["cleaning_type"],
-        floorplan_uuid=body.get("floorplan_uuid"),
+        ability=body_source.get("ability", ""),
+        cleaning_type=body_source.get("cleaning_type", ""),
+        floorplan_uuid=body_source.get("floorplan_uuid"),
         runs=runs,
-        started_by=body["started_by"],
-        timing=timing
+        started_by=body_source.get("started_by", ""),
+        timing=timing,
     )
 
     return CleaningStateResponse(code=code, body=cleaning_state_body)
