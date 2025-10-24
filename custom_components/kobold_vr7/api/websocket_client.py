@@ -24,6 +24,7 @@ from ..const import (
     MOBILE_APP_OS_VERSION,
     MOBILE_APP_USER_AGENT,
     MOBILE_APP_VERSION,
+    ERROR_CODE_DESCRIPTIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -483,7 +484,7 @@ class KoboldWebSocketClient:
 
         # Actualizar la entidad
         self.entity._attr_activity = ha_activity
-        self.entity._attr_status = action
+        status_text = action or state or "desconocido"
 
         # Guardar estado de la bolsa
         if response_body.cleaning_center and response_body.cleaning_center.bag_status:
@@ -494,11 +495,34 @@ class KoboldWebSocketClient:
             self.entity._attr_available_commands = available_commands
             _LOGGER.debug("Available commands updated: %s", available_commands)
 
+        if errors:
+            errores_legibles: list[str] = []
+            errores_detallados: list[dict[str, str]] = []
+            for error in errors:
+                descripcion = self._describe_error(error)
+                severidad_legible = self._map_severity(error.severity)
+                errores_legibles.append(descripcion)
+                detalle_error = {
+                    "codigo": error.code,
+                    "descripcion": descripcion,
+                }
+                if severidad_legible:
+                    detalle_error["severidad"] = severidad_legible
+                errores_detallados.append(detalle_error)
+            status_text = errores_legibles[0]
+            self.entity._ultimo_error = errores_legibles[0]
+            self.entity._errores_detallados = errores_detallados
+        else:
+            self.entity._ultimo_error = None
+            self.entity._errores_detallados = []
+
         # Determinar y almacenar el estado de la batería
         details = response_body.details
         battery_level = getattr(details, "charge", None)
         is_charging = getattr(details, "is_charging", False)
         self.entity._is_charging = is_charging
+
+        self.entity._attr_status = status_text
 
         entry_data = self.entity.hass.data[DOMAIN][self.entity._entry_id]
         runtime = entry_data.setdefault("runtime", {})
@@ -529,6 +553,34 @@ class KoboldWebSocketClient:
         if self._reconnect_task:
             self._reconnect_task.cancel()
         self.connected = False
+
+    def _describe_error(self, error: Error) -> str:
+        """Convierte un código de error en una descripción legible."""
+
+        descripcion = ERROR_CODE_DESCRIPTIONS.get(error.code)
+        if not descripcion:
+            descripcion = error.code.replace("_", " ").capitalize()
+
+        if error.severity:
+            severidad_legible = self._map_severity(error.severity)
+            if severidad_legible:
+                return f"{descripcion} (severidad: {severidad_legible})"
+            return descripcion
+
+        return descripcion
+
+    @staticmethod
+    def _map_severity(severity: Optional[str]) -> Optional[str]:
+        """Traduce la severidad del error a español."""
+
+        if severity is None:
+            return None
+
+        return {
+            "error": "error",
+            "warning": "advertencia",
+            "info": "información",
+        }.get(severity, severity)
 
     def _sanitize_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
         """Oculta información sensible antes de registrar cabeceras."""

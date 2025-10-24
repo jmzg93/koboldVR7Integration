@@ -174,6 +174,8 @@ class KoboldVacuumEntity(StateVacuumEntity):
 
         self._attr_fan_speed_list = ['auto', 'eco', 'turbo']
         self._attr_fan_speed = 'auto'
+        self._ultimo_error: str | None = None
+        self._errores_detallados: list[dict[str, Any]] = []
 
         runtime = hass.data[DOMAIN][entry_id].setdefault("runtime", {})
         robots_state = runtime.setdefault("robots", {})
@@ -257,6 +259,11 @@ class KoboldVacuumEntity(StateVacuumEntity):
     def extra_state_attributes(self):
         """Devuelve los atributos de estado adicionales de la aspiradora."""
         attributes: dict[str, Any] = {}
+
+        if self._ultimo_error:
+            attributes['ultimo_error'] = self._ultimo_error
+        if self._errores_detallados:
+            attributes['errores_detallados'] = self._errores_detallados
 
         if self.map_with_zones_list:
             # 1) maps: map_id → map_name
