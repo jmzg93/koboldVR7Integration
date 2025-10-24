@@ -176,8 +176,6 @@ class KoboldVacuumEntity(StateVacuumEntity):
         self._attr_fan_speed = 'auto'
         self._ultimo_error: str | None = None
         self._errores_detallados: list[dict[str, Any]] = []
-        self._ultima_accion: str = ""
-        self._ultima_accion_original: str | None = None
 
         runtime = hass.data[DOMAIN][entry_id].setdefault("runtime", {})
         robots_state = runtime.setdefault("robots", {})

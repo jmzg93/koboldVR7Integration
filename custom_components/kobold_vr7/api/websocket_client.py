@@ -176,19 +176,6 @@ _STATE_STATUS_TRANSLATIONS = {
     "charging": "Cargando",
 }
 
-
-def _normalize_action(action: Optional[str]) -> str:
-    """Devuelve la acción normalizada en minúsculas y sin valores irrelevantes."""
-
-    if not action:
-        return ""
-
-    normalizada = action.strip().lower()
-    if normalizada == "invalid":
-        return ""
-
-    return normalizada
-
 class KoboldWebSocketClient:
     def __init__(
         self,
@@ -557,43 +544,18 @@ class KoboldWebSocketClient:
 
     async def update_entity_state(self, response_body: ResponseBody):
         """Actualiza el estado de la entidad basado en los datos de ResponseBody."""
-        action_original = response_body.action
+        action = response_body.action
         state = response_body.state
         available_commands = response_body.available_commands
         details = response_body.details
         errors = response_body.errors
 
-        accion_normalizada = _normalize_action(action_original)
-        # Conservamos la última acción válida para reutilizarla cuando Companion envía valores vacíos
-        if accion_normalizada:
-            self.entity._ultima_accion = accion_normalizada
-            self.entity._ultima_accion_original = action_original
-        else:
-            accion_normalizada = getattr(self.entity, "_ultima_accion", "")
-            if not action_original:
-                action_original = getattr(self.entity, "_ultima_accion_original", None)
-
         actividad_previa = getattr(self.entity, "_attr_activity", VacuumActivity.IDLE)
-        ha_activity = self._map_activity(
-            state,
-            accion_normalizada,
-            errors,
-            details,
-            actividad_previa,
-        )
+        ha_activity = self._map_activity(state, action, errors, details, actividad_previa)
 
         # Actualizar la entidad
         self.entity._attr_activity = ha_activity
-        status_text = self._build_status_text(action_original, accion_normalizada, state)
-
-        _LOGGER.debug(
-            "Acción evaluada: %s (normalizada: %s), estado bruto: %s, actividad previa: %s, actividad resultante: %s",
-            action_original or "(vacía)",
-            accion_normalizada or "(vacía)",
-            state,
-            actividad_previa,
-            ha_activity,
-        )
+        status_text = self._build_status_text(action, state)
 
         # Guardar estado de la bolsa
         if response_body.cleaning_center and response_body.cleaning_center.bag_status:
@@ -731,7 +693,7 @@ class KoboldWebSocketClient:
     def _map_activity(
         self,
         state: Optional[str],
-        accion_normalizada: str,
+        action: Optional[str],
         errors: Optional[list[Error]],
         details: Optional[Details],
         actividad_previa: VacuumActivity,
@@ -741,10 +703,10 @@ class KoboldWebSocketClient:
         if errors:
             return VacuumActivity.ERROR
 
-        if accion_normalizada in _CLEANING_ACTIONS:
+        if action in _CLEANING_ACTIONS:
             return VacuumActivity.CLEANING
 
-        if accion_normalizada in _RETURNING_ACTIONS:
+        if action in _RETURNING_ACTIONS:
             return VacuumActivity.RETURNING
 
         if state == "idle" and details and getattr(details, "is_docked", False):
@@ -754,39 +716,30 @@ class KoboldWebSocketClient:
             return VacuumActivity.PAUSED
 
         if state == "busy":
+            # Mantener la actividad previa si ya estábamos en una acción activa
             if actividad_previa in (
                 VacuumActivity.CLEANING,
                 VacuumActivity.RETURNING,
             ):
                 return actividad_previa
-            if accion_normalizada:
-                return VacuumActivity.CLEANING
-            return actividad_previa or VacuumActivity.IDLE
+            return VacuumActivity.CLEANING if action else VacuumActivity.IDLE
 
         if state == "idle":
             return VacuumActivity.IDLE
 
-        return actividad_previa or VacuumActivity.IDLE
+        return actividad_previa if actividad_previa else VacuumActivity.IDLE
 
-    def _build_status_text(
-        self,
-        accion_original: Optional[str],
-        accion_normalizada: str,
-        state: Optional[str],
-    ) -> str:
+    def _build_status_text(self, action: Optional[str], state: Optional[str]) -> str:
         """Genera un texto de estado en español a partir de la acción o estado."""
 
-        if accion_normalizada and accion_normalizada in _ACTION_STATUS_TRANSLATIONS:
-            return _ACTION_STATUS_TRANSLATIONS[accion_normalizada]
+        if action and action in _ACTION_STATUS_TRANSLATIONS:
+            return _ACTION_STATUS_TRANSLATIONS[action]
 
         if state and state in _STATE_STATUS_TRANSLATIONS:
             return _STATE_STATUS_TRANSLATIONS[state]
 
-        if accion_original:
-            return accion_original.replace("_", " ").capitalize()
-
-        if accion_normalizada:
-            return accion_normalizada.replace("_", " ").capitalize()
+        if action:
+            return action.replace("_", " ").capitalize()
 
         if state:
             return state.replace("_", " ").capitalize()
