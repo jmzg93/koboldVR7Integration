@@ -3,7 +3,7 @@ import logging
 import json
 import uuid
 import ssl
-from typing import Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
@@ -309,23 +309,85 @@ class KoboldWebSocketClient:
         _LOGGER.debug("Received message: %s", message)
         data = json.loads(message)
 
-        # Verificar que el mensaje es una lista con al menos 5 elementos
-        if isinstance(data, list) and len(data) >= 5:
-            topic = data[2]
-            event = data[3]
-            payload = data[4]
+        if isinstance(data, list):
+            await self._handle_phoenix_message(data)
+            return
 
-            # Manejar el evento phx_reply
-            if event == "phx_reply":
-                await self._handle_phx_reply(payload)
-            elif event == "last_state":
-                await self._handle_last_state(payload)
-            elif event == "cleaning_state":
-                await self._handle_cleaning_state(payload)
-            else:
-                _LOGGER.debug("Unhandled event: %s", event)
+        if isinstance(data, dict):
+            await self._handle_event_message(data)
+            return
+
+        _LOGGER.error("Formato de mensaje desconocido: %s", type(data))
+
+    async def _handle_phoenix_message(self, data: list) -> None:
+        """Gestiona mensajes en formato Phoenix."""
+
+        if len(data) < 5:
+            _LOGGER.error("Mensaje Phoenix incompleto: %s", data)
+            return
+
+        topic = data[2]
+        event = data[3]
+        payload = data[4]
+
+        if event == "phx_reply":
+            await self._handle_phx_reply(payload)
+        elif event == "last_state":
+            await self._handle_last_state(payload)
+        elif event == "cleaning_state":
+            await self._handle_cleaning_state(payload)
         else:
-            _LOGGER.error("Invalid message format")
+            _LOGGER.debug("Evento Phoenix no manejado en %s: %s", topic, event)
+
+    async def _handle_event_message(self, data: Dict[str, Any]) -> None:
+        """Gestiona mensajes en formato JSON plano enviados por Companion."""
+
+        event_type = data.get("event_type")
+        payload = data.get("payload")
+
+        if not event_type:
+            _LOGGER.debug("Mensaje sin tipo de evento: %s", data)
+            return
+
+        if event_type == "service_status":
+            _LOGGER.debug("Estado del servicio recibido: %s", payload)
+            return
+
+        if event_type == "state_changed":
+            await self._handle_state_changed_event(payload)
+            return
+
+        if event_type == "cleaning_state":
+            await self._handle_cleaning_state_event(payload)
+            return
+
+        _LOGGER.debug("Evento no manejado: %s", event_type)
+
+    async def _handle_state_changed_event(self, payload: Optional[Dict[str, Any]]) -> None:
+        """Convierte los eventos de cambio de estado en actualizaciones de entidad."""
+
+        if not payload or "state" not in payload:
+            _LOGGER.debug("Evento state_changed sin cuerpo válido: %s", payload)
+            return
+
+        try:
+            response_body = _parse_response_body(payload["state"])
+            await self.update_entity_state(response_body)
+        except Exception as error:
+            _LOGGER.error("Error procesando state_changed: %s", error)
+
+    async def _handle_cleaning_state_event(self, payload: Optional[Dict[str, Any]]) -> None:
+        """Procesa eventos cleaning_state enviados como JSON plano."""
+
+        if not payload:
+            _LOGGER.debug("Evento cleaning_state sin contenido: %s", payload)
+            return
+
+        try:
+            cleaning_state_response = _parse_cleaning_state_body(payload)
+            await self.update_cleaning_state(cleaning_state_response)
+        except Exception as error:
+            _LOGGER.error("Error procesando cleaning_state: %s", error)
 
     async def _handle_phx_reply(self, payload):
         if "response" in payload and "body" in payload["response"]:
