@@ -3,12 +3,9 @@ import logging
 import json
 import uuid
 import ssl
-import os
-from typing import Dict
-import websockets
-from websockets.client import connect as websockets_connect
+from typing import Any, Awaitable, Callable, Dict, Optional
 
-from websockets.exceptions import ConnectionClosed
+import aiohttp
 from .model.robot_wss_cleaning_state_response import CleaningStateResponse, \
     RunSettings, RunStats, RunTiming, Run, CleaningStateBody
 from .model.robot_wss_last_state_or_phx_reply_response import AutonomyStates, AvailableCommands, \
@@ -17,7 +14,18 @@ from .model.robot_wss_last_state_or_phx_reply_response import AutonomyStates, Av
 from homeassistant.components.vacuum import VacuumActivity
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from ..const import DOMAIN, SIGNAL_ROBOT_BATTERY
+from ..const import (
+    DOMAIN,
+    SIGNAL_ROBOT_BATTERY,
+    COMPANION_WS_URL,
+    MOBILE_APP_ACCEPT_ENCODING,
+    MOBILE_APP_BUILD,
+    MOBILE_APP_OS,
+    MOBILE_APP_OS_VERSION,
+    MOBILE_APP_USER_AGENT,
+    MOBILE_APP_VERSION,
+    ERROR_CODE_DESCRIPTIONS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,33 +84,55 @@ def _parse_response_body(body: Dict) -> ResponseBody:
     return response_body
 
 
+_RUN_TIMING_DEFAULTS = {
+    "charging": 0,
+    "end": "",
+    "error": 0,
+    "paused": 0,
+    "start": "",
+}
+
+
 def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
-    code = payload["code"]
-    body = payload["body"]
+    """Normaliza la estructura de los mensajes cleaning_state."""
+
+    # Los eventos JSON planos incluyen la información en "state"
+    # mientras que los mensajes Phoenix la envían en "body" junto al código.
+    body_source = payload.get("body") or payload.get("state") or {}
+    code = payload.get("code", 200)
+
     runs = []
-    for run_data in body["runs"]:
-        settings = RunSettings(**run_data["settings"])
-        stats = RunStats(**run_data["stats"])
-        timing = RunTiming(**run_data["timing"])
+    for run_data in body_source.get("runs", []) or []:
+        settings_data = run_data.get("settings", {})
+        settings = RunSettings(
+            mode=settings_data.get("mode", ""),
+            navigation_mode=settings_data.get("navigation_mode", ""),
+        )
+        stats_data = run_data.get("stats", {})
+        stats = RunStats(
+            area=stats_data.get("area", 0.0),
+            pickup_count=stats_data.get("pickup_count", 0),
+        )
+        timing = RunTiming(**{**_RUN_TIMING_DEFAULTS, **(run_data.get("timing") or {})})
         run = Run(
             settings=settings,
-            state=run_data["state"],
+            state=run_data.get("state", ""),
             stats=stats,
             timing=timing,
             track_name=run_data.get("track_name"),
-            track_uuid=run_data.get("track_uuid")
+            track_uuid=run_data.get("track_uuid"),
         )
         runs.append(run)
 
-    timing = RunTiming(**body["timing"])
+    timing = RunTiming(**{**_RUN_TIMING_DEFAULTS, **(body_source.get("timing") or {})})
 
     cleaning_state_body = CleaningStateBody(
-        ability=body["ability"],
-        cleaning_type=body["cleaning_type"],
-        floorplan_uuid=body.get("floorplan_uuid"),
+        ability=body_source.get("ability", ""),
+        cleaning_type=body_source.get("cleaning_type", ""),
+        floorplan_uuid=body_source.get("floorplan_uuid"),
         runs=runs,
-        started_by=body["started_by"],
-        timing=timing
+        started_by=body_source.get("started_by", ""),
+        timing=timing,
     )
 
     return CleaningStateResponse(code=code, body=cleaning_state_body)
@@ -112,32 +142,108 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
 # Esta operación bloqueante se realiza al importar el módulo, no dentro del bucle de eventos
 _SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
+# Conjuntos y traducciones para mapear acciones a actividades y estados legibles
+_CLEANING_ACTIONS = {
+    "cleaning",
+    "fast_mapping",
+    "mapping",
+    "map_creation",
+    "spot_cleaning",
+}
+
+_RETURNING_ACTIONS = {
+    "docking",
+    "returning",
+    "going_home",
+}
+
+_ACTION_STATUS_TRANSLATIONS = {
+    "cleaning": "Limpiando",
+    "fast_mapping": "Mapeando el hogar",
+    "mapping": "Mapeando el hogar",
+    "map_creation": "Mapeando el hogar",
+    "spot_cleaning": "Limpieza puntual",
+    "docking": "Regresando a la base",
+    "returning": "Regresando a la base",
+    "going_home": "Regresando a la base",
+}
+
+_STATE_STATUS_TRANSLATIONS = {
+    "busy": "Ocupado",
+    "idle": "Inactivo",
+    "paused": "Pausado",
+    "error": "Error",
+    "charging": "Cargando",
+}
+
 class KoboldWebSocketClient:
-    def __init__(self, hass, token, robot_id, entity):
+    def __init__(
+        self,
+        hass,
+        session: aiohttp.ClientSession,
+        id_token: str,
+        robot_id: str,
+        entity,
+        profile_login: Callable[[str], Awaitable[str]],
+        language: Optional[str] = None,
+    ):
         self.hass = hass
-        self.token = token
+        self._session = session
+        self._id_token = id_token
         self.robot_id = robot_id
         self.entity = entity  # Agrega la entidad aquí
         self.websocket = None
         self.connected = False
-        self._url = f"wss://orbital.ksecosys.com/socket/websocket?vsn=2.0.0&token={self.token}&vendor=vorwerk"
+        self._url = COMPANION_WS_URL
         self._listen_task = None
         self._reconnect_task = None  # Tarea para los intentos de reconexión
+        self._heartbeat_task: Optional[asyncio.Task] = None
         self._should_reconnect = True
+        self._profile_login = profile_login
+        self._language_header = self._format_language(language)
+        self._authorization_header: Optional[str] = None
+        self._ref_counter = 0
+        self._join_ref: Optional[str] = None
+        self._heartbeat_interval = 30  # Intervalo en segundos entre heartbeats
 
     async def connect(self):
         retry_delay = 1  # Comenzar con 1 segundo de retraso
         max_delay = 300  # Retraso máximo de 5 minutos
         while self._should_reconnect:
             try:
-                # Usar el contexto SSL global pre-creado
-                self.websocket = await websockets.connect(
+                self._authorization_header = None
+                self._authorization_header = await self._profile_login(self._id_token)
+                _LOGGER.debug(
+                    "Bearer recuperado para el WebSocket: %s",
+                    self._sanitize_headers({"Authorization": self._authorization_header})
+                    .get("Authorization"),
+                )
+                headers = self._build_connection_headers()
+
+                _LOGGER.debug(
+                    "Intentando conectar al WebSocket %s con cabeceras %s",
                     self._url,
-                    ssl=_SSL_CONTEXT
+                    self._sanitize_headers(headers),
+                )
+
+                # Usar el contexto SSL global pre-creado
+                self.websocket = await self._session.ws_connect(
+                    self._url,
+                    ssl=_SSL_CONTEXT,
+                    headers=headers,
+                    autoping=True,
                 )
                 self.connected = True
-                _LOGGER.debug("Conectado al WebSocket")
+                response_headers = {}
+                websocket_headers = getattr(self.websocket, "headers", None)
+                if websocket_headers is not None:
+                    response_headers = dict(websocket_headers)
+                _LOGGER.debug(
+                    "Conectado al WebSocket. Cabeceras de respuesta: %s",
+                    self._sanitize_headers(response_headers),
+                )
                 await self._join_robot_channel()
+                self._start_heartbeat()
                 self._listen_task = self.hass.loop.create_task(self._listen())
                 break  # Salir del bucle al conectar exitosamente
             except Exception as e:
@@ -149,48 +255,137 @@ class KoboldWebSocketClient:
                 # Backoff exponencial
                 retry_delay = min(retry_delay * 2, max_delay)
 
+    def _build_connection_headers(self) -> Dict[str, str]:
+        """Genera las cabeceras necesarias para el WebSocket."""
+
+        if not self._authorization_header:
+            raise RuntimeError("No se pudo generar la cabecera Authorization para el WebSocket")
+
+        return {
+            "Authorization": self._authorization_header,
+            "Accept-Language": self._language_header,
+            "mobile-app-version": MOBILE_APP_VERSION,
+            "mobile-app-build": MOBILE_APP_BUILD,
+            "mobile-app-os": MOBILE_APP_OS,
+            "mobile-app-os-version": MOBILE_APP_OS_VERSION,
+            "Accept-Encoding": MOBILE_APP_ACCEPT_ENCODING,
+            "User-Agent": MOBILE_APP_USER_AGENT,
+        }
+
+    def _format_language(self, language: Optional[str]) -> str:
+        """Normaliza el idioma en el formato esperado."""
+
+        if not language:
+            return "es-ES"
+
+        language = language.replace("_", "-")
+        if "-" in language:
+            parts = language.split("-")
+            return f"{parts[0].lower()}-{parts[-1].upper()}"
+
+        if len(language) == 2:
+            return f"{language.lower()}-{language.upper()}"
+
+        return language
+
     async def _join_robot_channel(self):
         # Enviar mensaje para unirse al canal del robot
+        self._ref_counter = 0
+        self._join_ref = self._next_ref()
         join_msg = [
-            "6",
-            "6",
+            self._join_ref,
+            self._next_ref(),
             f"robots:{self.robot_id}",
             "phx_join",
             {}
         ]
-        await self.websocket.send(json.dumps(join_msg))
+        payload = json.dumps(join_msg)
+        _LOGGER.debug("Enviando mensaje de unión al canal: %s", payload)
+        await self.websocket.send_str(payload)
 
         unique_request_id = str(uuid.uuid4())
         # Enviar mensaje para solicitar el último estado
         last_state_msg = [
-            "6",
-            "8",
+            self._join_ref,
+            self._next_ref(),
             f"robots:{self.robot_id}",
             "last_state",
             {"request_id": unique_request_id}
         ]
-        await self.websocket.send(json.dumps(last_state_msg))
+        last_state_payload = json.dumps(last_state_msg)
+        _LOGGER.debug("Solicitando último estado del robot: %s", last_state_payload)
+        await self.websocket.send_str(last_state_payload)
+
+    def _start_heartbeat(self) -> None:
+        """Inicia el envío periódico de heartbeats Phoenix."""
+
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            return
+
+        async def _heartbeat_loop():
+            try:
+                while self.connected and self.websocket and not self.websocket.closed:
+                    await asyncio.sleep(self._heartbeat_interval)
+                    await self._send_heartbeat()
+            except asyncio.CancelledError:
+                _LOGGER.debug("Tarea de heartbeat cancelada")
+                raise
+            except Exception as error:
+                _LOGGER.warning("Error enviando heartbeat: %s", error)
+
+        self._heartbeat_task = self.hass.loop.create_task(_heartbeat_loop())
+
+    async def _send_heartbeat(self) -> None:
+        """Envía un heartbeat Phoenix para mantener la conexión viva."""
+
+        if not self.websocket or self.websocket.closed:
+            return
+
+        heartbeat_msg = [
+            None,
+            self._next_ref(),
+            "phoenix",
+            "heartbeat",
+            {},
+        ]
+        payload = json.dumps(heartbeat_msg)
+        _LOGGER.debug("Enviando heartbeat: %s", payload)
+        await self.websocket.send_str(payload)
 
     async def _listen(self):
         try:
             async for message in self.websocket:
-                await self._handle_message(message)
-        except (ConnectionClosed, websockets.exceptions.WebSocketException) as e:
-            _LOGGER.warning("Conexión WebSocket cerrada: %s", e)
-            self.connected = False
-            # Iniciar intento de reconexión si no se está reconectando ya
-            if self._should_reconnect:
-                if self._reconnect_task is None or self._reconnect_task.done():
-                    self._reconnect_task = self.hass.loop.create_task(
-                        self._reconnect())
+                if message.type == aiohttp.WSMsgType.TEXT:
+                    await self._handle_message(message.data)
+                elif message.type == aiohttp.WSMsgType.BINARY:
+                    _LOGGER.debug(
+                        "Mensaje binario recibido (%s bytes)", len(message.data)
+                    )
+                elif message.type == aiohttp.WSMsgType.ERROR:
+                    _LOGGER.error(
+                        "Error en el WebSocket: %s", self.websocket.exception()
+                    )
+                    break
+                elif message.type in (
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.CLOSING,
+                ):
+                    _LOGGER.info("El servidor cerró la conexión WebSocket")
+                    break
+                else:
+                    _LOGGER.debug("Mensaje WebSocket no manejado: %s", message.type)
+        except aiohttp.ClientError as e:
+            _LOGGER.warning("Conexión WebSocket cerrada con error de cliente: %s", e)
+        except asyncio.CancelledError:
+            _LOGGER.debug("Escucha del WebSocket cancelada")
+            raise
         except Exception as e:
             _LOGGER.error("Error en _listen: %s", e)
+        finally:
             self.connected = False
-            # Iniciar intento de reconexión si no se está reconectando ya
+            await self._stop_heartbeat()
             if self._should_reconnect:
-                if self._reconnect_task is None or self._reconnect_task.done():
-                    self._reconnect_task = self.hass.loop.create_task(
-                        self._reconnect())
+                self._schedule_reconnect()
 
     async def _reconnect(self):
         """Intentar reconectar el WebSocket."""
@@ -206,27 +401,98 @@ class KoboldWebSocketClient:
         await asyncio.sleep(5)
         await self.connect()
 
+    def _schedule_reconnect(self) -> None:
+        """Programa un intento de reconexión si no existe uno activo."""
+
+        if not self._should_reconnect:
+            return
+
+        if self._reconnect_task is None or self._reconnect_task.done():
+            self._reconnect_task = self.hass.loop.create_task(self._reconnect())
+
     async def _handle_message(self, message):
         _LOGGER.debug("Received message: %s", message)
         data = json.loads(message)
 
-        # Verificar que el mensaje es una lista con al menos 5 elementos
-        if isinstance(data, list) and len(data) >= 5:
-            topic = data[2]
-            event = data[3]
-            payload = data[4]
+        if isinstance(data, list):
+            await self._handle_phoenix_message(data)
+            return
 
-            # Manejar el evento phx_reply
-            if event == "phx_reply":
-                await self._handle_phx_reply(payload)
-            elif event == "last_state":
-                await self._handle_last_state(payload)
-            elif event == "cleaning_state":
-                await self._handle_cleaning_state(payload)
-            else:
-                _LOGGER.debug("Unhandled event: %s", event)
+        if isinstance(data, dict):
+            await self._handle_event_message(data)
+            return
+
+        _LOGGER.error("Formato de mensaje desconocido: %s", type(data))
+
+    async def _handle_phoenix_message(self, data: list) -> None:
+        """Gestiona mensajes en formato Phoenix."""
+
+        if len(data) < 5:
+            _LOGGER.error("Mensaje Phoenix incompleto: %s", data)
+            return
+
+        topic = data[2]
+        event = data[3]
+        payload = data[4]
+
+        if event == "phx_reply":
+            await self._handle_phx_reply(payload)
+        elif event == "last_state":
+            await self._handle_last_state(payload)
+        elif event == "cleaning_state":
+            await self._handle_cleaning_state(payload)
         else:
-            _LOGGER.error("Invalid message format")
+            _LOGGER.debug("Evento Phoenix no manejado en %s: %s", topic, event)
+
+    async def _handle_event_message(self, data: Dict[str, Any]) -> None:
+        """Gestiona mensajes en formato JSON plano enviados por Companion."""
+
+        event_type = data.get("event_type")
+        payload = data.get("payload")
+
+        if not event_type:
+            _LOGGER.debug("Mensaje sin tipo de evento: %s", data)
+            return
+
+        if event_type == "service_status":
+            _LOGGER.debug("Estado del servicio recibido: %s", payload)
+            return
+
+        if event_type == "state_changed":
+            await self._handle_state_changed_event(payload)
+            return
+
+        if event_type == "cleaning_state":
+            await self._handle_cleaning_state_event(payload)
+            return
+
+        _LOGGER.debug("Evento no manejado: %s", event_type)
+
+    async def _handle_state_changed_event(self, payload: Optional[Dict[str, Any]]) -> None:
+        """Convierte los eventos de cambio de estado en actualizaciones de entidad."""
+
+        if not payload or "state" not in payload:
+            _LOGGER.debug("Evento state_changed sin cuerpo válido: %s", payload)
+            return
+
+        try:
+            response_body = _parse_response_body(payload["state"])
+            await self.update_entity_state(response_body)
+        except Exception as error:
+            _LOGGER.error("Error procesando state_changed: %s", error)
+
+    async def _handle_cleaning_state_event(self, payload: Optional[Dict[str, Any]]) -> None:
+        """Procesa eventos cleaning_state enviados como JSON plano."""
+
+        if not payload:
+            _LOGGER.debug("Evento cleaning_state sin contenido: %s", payload)
+            return
+
+        try:
+            cleaning_state_response = _parse_cleaning_state_body(payload)
+            await self.update_cleaning_state(cleaning_state_response)
+        except Exception as error:
+            _LOGGER.error("Error procesando cleaning_state: %s", error)
 
     async def _handle_phx_reply(self, payload):
         if "response" in payload and "body" in payload["response"]:
@@ -284,23 +550,12 @@ class KoboldWebSocketClient:
         details = response_body.details
         errors = response_body.errors
 
-        # Actualizar el estado usando VacuumActivity
-        if state == "busy" and action == "cleaning":
-            ha_activity = VacuumActivity.CLEANING
-        elif state == "idle" and details and details.is_docked:
-            ha_activity = VacuumActivity.DOCKED
-        elif action == "cleaning" and state == "paused":
-            ha_activity = VacuumActivity.PAUSED
-        elif action == "docking":
-            ha_activity = VacuumActivity.RETURNING
-        elif errors:
-            ha_activity = VacuumActivity.ERROR
-        else:
-            ha_activity = VacuumActivity.IDLE
+        actividad_previa = getattr(self.entity, "_attr_activity", VacuumActivity.IDLE)
+        ha_activity = self._map_activity(state, action, errors, details, actividad_previa)
 
         # Actualizar la entidad
         self.entity._attr_activity = ha_activity
-        self.entity._attr_status = action
+        status_text = self._build_status_text(action, state)
 
         # Guardar estado de la bolsa
         if response_body.cleaning_center and response_body.cleaning_center.bag_status:
@@ -311,11 +566,34 @@ class KoboldWebSocketClient:
             self.entity._attr_available_commands = available_commands
             _LOGGER.debug("Available commands updated: %s", available_commands)
 
+        if errors:
+            errores_legibles: list[str] = []
+            errores_detallados: list[dict[str, str]] = []
+            for error in errors:
+                descripcion = self._describe_error(error)
+                severidad_legible = self._map_severity(error.severity)
+                errores_legibles.append(descripcion)
+                detalle_error = {
+                    "codigo": error.code,
+                    "descripcion": descripcion,
+                }
+                if severidad_legible:
+                    detalle_error["severidad"] = severidad_legible
+                errores_detallados.append(detalle_error)
+            status_text = errores_legibles[0]
+            self.entity._ultimo_error = errores_legibles[0]
+            self.entity._errores_detallados = errores_detallados
+        else:
+            self.entity._ultimo_error = None
+            self.entity._errores_detallados = []
+
         # Determinar y almacenar el estado de la batería
         details = response_body.details
         battery_level = getattr(details, "charge", None)
         is_charging = getattr(details, "is_charging", False)
         self.entity._is_charging = is_charging
+
+        self.entity._attr_status = status_text
 
         entry_data = self.entity.hass.data[DOMAIN][self.entity._entry_id]
         runtime = entry_data.setdefault("runtime", {})
@@ -345,4 +623,125 @@ class KoboldWebSocketClient:
             self._listen_task.cancel()
         if self._reconnect_task:
             self._reconnect_task.cancel()
+        await self._stop_heartbeat()
         self.connected = False
+
+    async def _stop_heartbeat(self) -> None:
+        """Detiene la tarea de heartbeats si está activa."""
+
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        self._heartbeat_task = None
+
+    def _describe_error(self, error: Error) -> str:
+        """Convierte un código de error en una descripción legible."""
+
+        descripcion = ERROR_CODE_DESCRIPTIONS.get(error.code)
+        if not descripcion:
+            descripcion = error.code.replace("_", " ").capitalize()
+
+        if error.severity:
+            severidad_legible = self._map_severity(error.severity)
+            if severidad_legible:
+                return f"{descripcion} (severidad: {severidad_legible})"
+            return descripcion
+
+        return descripcion
+
+    @staticmethod
+    def _map_severity(severity: Optional[str]) -> Optional[str]:
+        """Traduce la severidad del error a español."""
+
+        if severity is None:
+            return None
+
+        return {
+            "error": "error",
+            "warning": "advertencia",
+            "info": "información",
+        }.get(severity, severity)
+
+    def _sanitize_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Oculta información sensible antes de registrar cabeceras."""
+
+        sanitized = dict(headers)
+        authorization = sanitized.get("Authorization")
+        if authorization:
+            sanitized["Authorization"] = self._mask_token(authorization)
+        return sanitized
+
+    @staticmethod
+    def _mask_token(value: str) -> str:
+        """Devuelve el token parcialmente oculto para los logs."""
+
+        token = value.replace("Bearer ", "")
+        if len(token) <= 12:
+            return value
+
+        return f"Bearer {token[:6]}...{token[-4:]}"
+
+    def _next_ref(self) -> str:
+        """Genera un identificador incremental para los mensajes Phoenix."""
+
+        self._ref_counter += 1
+        return str(self._ref_counter)
+
+    def _map_activity(
+        self,
+        state: Optional[str],
+        action: Optional[str],
+        errors: Optional[list[Error]],
+        details: Optional[Details],
+        actividad_previa: VacuumActivity,
+    ) -> VacuumActivity:
+        """Determina la actividad de la entidad con lógica adicional para mapeos."""
+
+        if errors:
+            return VacuumActivity.ERROR
+
+        if action in _CLEANING_ACTIONS:
+            return VacuumActivity.CLEANING
+
+        if action in _RETURNING_ACTIONS:
+            return VacuumActivity.RETURNING
+
+        if state == "idle" and details and getattr(details, "is_docked", False):
+            return VacuumActivity.DOCKED
+
+        if state == "paused":
+            return VacuumActivity.PAUSED
+
+        if state == "busy":
+            # Mantener la actividad previa si ya estábamos en una acción activa
+            if actividad_previa in (
+                VacuumActivity.CLEANING,
+                VacuumActivity.RETURNING,
+            ):
+                return actividad_previa
+            return VacuumActivity.CLEANING if action else VacuumActivity.IDLE
+
+        if state == "idle":
+            return VacuumActivity.IDLE
+
+        return actividad_previa if actividad_previa else VacuumActivity.IDLE
+
+    def _build_status_text(self, action: Optional[str], state: Optional[str]) -> str:
+        """Genera un texto de estado en español a partir de la acción o estado."""
+
+        if action and action in _ACTION_STATUS_TRANSLATIONS:
+            return _ACTION_STATUS_TRANSLATIONS[action]
+
+        if state and state in _STATE_STATUS_TRANSLATIONS:
+            return _STATE_STATUS_TRANSLATIONS[state]
+
+        if action:
+            return action.replace("_", " ").capitalize()
+
+        if state:
+            return state.replace("_", " ").capitalize()
+
+        return "desconocido"
