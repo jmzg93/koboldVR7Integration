@@ -142,6 +142,40 @@ def _parse_cleaning_state_body(payload: Dict) -> CleaningStateResponse:
 # Esta operación bloqueante se realiza al importar el módulo, no dentro del bucle de eventos
 _SSL_CONTEXT = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
+# Conjuntos y traducciones para mapear acciones a actividades y estados legibles
+_CLEANING_ACTIONS = {
+    "cleaning",
+    "fast_mapping",
+    "mapping",
+    "map_creation",
+    "spot_cleaning",
+}
+
+_RETURNING_ACTIONS = {
+    "docking",
+    "returning",
+    "going_home",
+}
+
+_ACTION_STATUS_TRANSLATIONS = {
+    "cleaning": "Limpiando",
+    "fast_mapping": "Mapeando el hogar",
+    "mapping": "Mapeando el hogar",
+    "map_creation": "Mapeando el hogar",
+    "spot_cleaning": "Limpieza puntual",
+    "docking": "Regresando a la base",
+    "returning": "Regresando a la base",
+    "going_home": "Regresando a la base",
+}
+
+_STATE_STATUS_TRANSLATIONS = {
+    "busy": "Ocupado",
+    "idle": "Inactivo",
+    "paused": "Pausado",
+    "error": "Error",
+    "charging": "Cargando",
+}
+
 class KoboldWebSocketClient:
     def __init__(
         self,
@@ -516,23 +550,12 @@ class KoboldWebSocketClient:
         details = response_body.details
         errors = response_body.errors
 
-        # Actualizar el estado usando VacuumActivity
-        if state == "busy" and action == "cleaning":
-            ha_activity = VacuumActivity.CLEANING
-        elif state == "idle" and details and details.is_docked:
-            ha_activity = VacuumActivity.DOCKED
-        elif action == "cleaning" and state == "paused":
-            ha_activity = VacuumActivity.PAUSED
-        elif action == "docking":
-            ha_activity = VacuumActivity.RETURNING
-        elif errors:
-            ha_activity = VacuumActivity.ERROR
-        else:
-            ha_activity = VacuumActivity.IDLE
+        actividad_previa = getattr(self.entity, "_attr_activity", VacuumActivity.IDLE)
+        ha_activity = self._map_activity(state, action, errors, details, actividad_previa)
 
         # Actualizar la entidad
         self.entity._attr_activity = ha_activity
-        status_text = action or state or "desconocido"
+        status_text = self._build_status_text(action, state)
 
         # Guardar estado de la bolsa
         if response_body.cleaning_center and response_body.cleaning_center.bag_status:
@@ -666,3 +689,59 @@ class KoboldWebSocketClient:
 
         self._ref_counter += 1
         return str(self._ref_counter)
+
+    def _map_activity(
+        self,
+        state: Optional[str],
+        action: Optional[str],
+        errors: Optional[list[Error]],
+        details: Optional[Details],
+        actividad_previa: VacuumActivity,
+    ) -> VacuumActivity:
+        """Determina la actividad de la entidad con lógica adicional para mapeos."""
+
+        if errors:
+            return VacuumActivity.ERROR
+
+        if action in _CLEANING_ACTIONS:
+            return VacuumActivity.CLEANING
+
+        if action in _RETURNING_ACTIONS:
+            return VacuumActivity.RETURNING
+
+        if state == "idle" and details and getattr(details, "is_docked", False):
+            return VacuumActivity.DOCKED
+
+        if state == "paused":
+            return VacuumActivity.PAUSED
+
+        if state == "busy":
+            # Mantener la actividad previa si ya estábamos en una acción activa
+            if actividad_previa in (
+                VacuumActivity.CLEANING,
+                VacuumActivity.RETURNING,
+            ):
+                return actividad_previa
+            return VacuumActivity.CLEANING if action else VacuumActivity.IDLE
+
+        if state == "idle":
+            return VacuumActivity.IDLE
+
+        return actividad_previa if actividad_previa else VacuumActivity.IDLE
+
+    def _build_status_text(self, action: Optional[str], state: Optional[str]) -> str:
+        """Genera un texto de estado en español a partir de la acción o estado."""
+
+        if action and action in _ACTION_STATUS_TRANSLATIONS:
+            return _ACTION_STATUS_TRANSLATIONS[action]
+
+        if state and state in _STATE_STATUS_TRANSLATIONS:
+            return _STATE_STATUS_TRANSLATIONS[state]
+
+        if action:
+            return action.replace("_", " ").capitalize()
+
+        if state:
+            return state.replace("_", " ").capitalize()
+
+        return "desconocido"
