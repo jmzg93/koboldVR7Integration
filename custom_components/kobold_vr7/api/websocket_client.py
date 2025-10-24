@@ -173,9 +173,13 @@ class KoboldWebSocketClient:
                     autoping=True,
                 )
                 self.connected = True
+                response_headers = {}
+                websocket_headers = getattr(self.websocket, "headers", None)
+                if websocket_headers is not None:
+                    response_headers = dict(websocket_headers)
                 _LOGGER.debug(
                     "Conectado al WebSocket. Cabeceras de respuesta: %s",
-                    self._sanitize_headers(dict(self.websocket.response_headers)),
+                    self._sanitize_headers(response_headers),
                 )
                 await self._join_robot_channel()
                 self._listen_task = self.hass.loop.create_task(self._listen())
