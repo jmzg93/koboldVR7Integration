@@ -18,18 +18,18 @@ SIGNAL_ROBOT_BATTERY = "kobold_vr7_battery"
 # Mercados soportados y el idioma asociado que necesitan las APIs
 DEFAULT_MARKET = "es"
 SUPPORTED_MARKETS = {
-    "de": {
-        "label": "Alemania",
-        "locale": "de",
-        "accept_language": "de-DE",
-    },
     "es": {
         "label": "España",
         "locale": "es",
         "accept_language": "es-ES",
     },
+    "de": {
+        "label": "Deutschland",
+        "locale": "de",
+        "accept_language": "de-DE",
+    },
     "fr": {
-        "label": "Francia",
+        "label": "France",
         "locale": "fr",
         "accept_language": "fr-FR",
     },
@@ -39,7 +39,7 @@ SUPPORTED_MARKETS = {
         "accept_language": "it-IT",
     },
     "en": {
-        "label": "Reino Unido / Internacional",
+        "label": "United Kingdom / International",
         "locale": "en",
         "accept_language": "en-EN",
     },
