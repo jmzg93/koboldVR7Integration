@@ -2,6 +2,7 @@ DOMAIN = "kobold_vr7"
 CONF_EMAIL = "email"
 CONF_OTP = "otp"
 CONF_ID_TOKEN = "id_token"
+CONF_MARKET = "market"
 ORBITAL_HOST = "https://orbital.ksecosys.com"
 AUTH_HOST = "https://mykobold.eu.auth0.com"
 COMPANION_HOST = "https://api-2-prod.companion.kobold.vorwerk.com"
@@ -13,6 +14,36 @@ MOBILE_APP_OS_VERSION = "11"
 MOBILE_APP_USER_AGENT = "okhttp/5.1.0"
 MOBILE_APP_ACCEPT_ENCODING = "gzip"
 SIGNAL_ROBOT_BATTERY = "kobold_vr7_battery"
+
+# Mercados soportados y el idioma asociado que necesitan las APIs
+DEFAULT_MARKET = "es"
+SUPPORTED_MARKETS = {
+    "de": {
+        "label": "Alemania",
+        "locale": "de",
+        "accept_language": "de-DE",
+    },
+    "es": {
+        "label": "España",
+        "locale": "es",
+        "accept_language": "es-ES",
+    },
+    "fr": {
+        "label": "Francia",
+        "locale": "fr",
+        "accept_language": "fr-FR",
+    },
+    "it": {
+        "label": "Italia",
+        "locale": "it",
+        "accept_language": "it-IT",
+    },
+    "en": {
+        "label": "Reino Unido / Internacional",
+        "locale": "en",
+        "accept_language": "en-EN",
+    },
+}
 
 # Descripciones amigables para los códigos de error recibidos por WebSocket
 ERROR_CODE_DESCRIPTIONS = {
