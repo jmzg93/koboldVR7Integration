@@ -20,6 +20,9 @@ from .const import (
     CONF_ID_TOKEN,
     ORBITAL_HOST,
     COMPANION_HOST,
+    CONF_MARKET,
+    DEFAULT_MARKET,
+    SUPPORTED_MARKETS,
 )
 from .service.robot_service import RobotsService
 from .api.robots_api_client import RobotsApiClient
@@ -42,6 +45,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     id_token = config[CONF_ID_TOKEN]
 
+    market_key = config.get(CONF_MARKET, DEFAULT_MARKET)
+    market_settings = SUPPORTED_MARKETS.get(
+        market_key, SUPPORTED_MARKETS[DEFAULT_MARKET]
+    )
+    accept_language = market_settings["accept_language"]
+
     session = async_get_clientsession(hass)
 
     robots_service = runtime.get("robots_service")
@@ -55,7 +64,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     profile_service = runtime.get("profile_service")
     if not profile_service:
         profile_api_client = ProfileApiClient(
-            session, host=COMPANION_HOST, language=hass.config.language
+            session, host=COMPANION_HOST, language=accept_language
         )
         profile_service = ProfileService(profile_api_client)
         runtime["profile_service"] = profile_service
@@ -102,6 +111,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             session,
             id_token,
             map_with_zones_list,
+            accept_language,
         ))
 
     async_add_entities(entities, update_before_add=True)
@@ -144,6 +154,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         session,
         id_token,
         map_with_zones_list,
+        accept_language,
     ):
         self.hass = hass
         self._entry_id = entry_id
@@ -176,6 +187,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         self._attr_fan_speed = 'auto'
         self._ultimo_error: str | None = None
         self._errores_detallados: list[dict[str, Any]] = []
+        self._accept_language = accept_language
 
         runtime = hass.data[DOMAIN][entry_id].setdefault("runtime", {})
         robots_state = runtime.setdefault("robots", {})
@@ -192,7 +204,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
                 robot.id,
                 self,
                 profile_service.login,
-                hass.config.language,
+                self._accept_language,
             )
         )
 

@@ -5,7 +5,8 @@
         "title": "Conectar con Kobold",
         "description": "Ingresa tu correo electrónico para recibir el código OTP.",
         "data": {
-          "email": "Correo electrónico"
+          "email": "Correo electrónico",
+          "market": "País"
         }
       },
       "otp": {
