@@ -35,6 +35,11 @@ class UserApiClient:
 
     async def validate_otp(self, email: str, otp: str) -> ValidateOtpResponse:
         url = self.host + self.path_validate_otp
+        # fix source for the german market
+        if self.lanugage != "de":
+            source = "vorwerk_auth0_international"
+        else:
+            source = "vorwerk_auth0"
         payload = {
             "client_id": self.client_id,
             "scope": "openid profile email",
@@ -44,7 +49,7 @@ class UserApiClient:
             "realm": "email",
             "platform": "android",
             "locale": self.language,  # Usando el idioma configurado
-            "source": "vorwerk_auth0_international",
+            "source": source,
         }
         response = await self._make_request("POST", url, json=payload)
         return ValidateOtpResponse(**response)
