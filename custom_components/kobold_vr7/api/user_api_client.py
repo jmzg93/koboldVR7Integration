@@ -36,7 +36,7 @@ class UserApiClient:
     async def validate_otp(self, email: str, otp: str) -> ValidateOtpResponse:
         url = self.host + self.path_validate_otp
         # fix source for the german market
-        if self.lanugage != "de":
+        if self.language != "de":
             source = "vorwerk_auth0_international"
         else:
             source = "vorwerk_auth0"
