@@ -288,24 +288,23 @@ vr7_clean_selected_zone:
 
 Add the template sensors to `configuration.yaml` (or a dedicated templates file) to resolve the map and zone UUIDs based on the selected helper values.
 
-```yaml
-sensor:
-  - platform: template
-    sensors:
-      vr7_selected_map_name:
-        friendly_name: "VR7 map name (from selection)"
-        value_template: >-
-          {% set zone_sel = states('input_select.vr7_zone') %}
-          {% if zone_sel and zone_sel != '—' and (' | ' in zone_sel) %}
-            {{ zone_sel.split(' | ', 1)[0] | trim }}
-          {% else %}
-            {% set map_sel = states('input_select.vr7_map') %}
-            {{ map_sel if map_sel and map_sel != '—' else '' }}
-          {% endif %}
+The map and zone selectors are intentionally resolved independently:
 
-      vr7_selected_zone_name:
-        friendly_name: "VR7 zone name (from selection)"
-        value_template: >-
+- `input_select.vr7_map` drives `sensor.vr7_selected_map_uuid`, used by the full-map cleaning script.
+- `input_select.vr7_zone` contains values in the `Map | Zone` format and drives `sensor.vr7_selected_zone_uuid`, used by the zone cleaning script.
+
+This avoids the zone selector overriding the map selector when launching a full-map cleaning routine.
+
+```yaml
+template:
+  - sensor:
+      - name: "VR7 selected map name"
+        state: >-
+          {% set map_sel = states('input_select.vr7_map') %}
+          {{ map_sel if map_sel and map_sel != '—' else '' }}
+
+      - name: "VR7 selected zone name"
+        state: >-
           {% set zone_sel = states('input_select.vr7_zone') %}
           {% if zone_sel and zone_sel != '—' and (' | ' in zone_sel) %}
             {{ zone_sel.split(' | ', 1)[1] | trim }}
@@ -313,9 +312,8 @@ sensor:
             {{ '' }}
           {% endif %}
 
-      vr7_selected_map_uuid:
-        friendly_name: "VR7 map UUID"
-        value_template: >-
+      - name: "VR7 selected map uuid"
+        state: >-
           {% set maps_attr = state_attr('vacuum.roomba','maps') %}
           {% set maps = maps_attr if maps_attr is mapping else {} %}
           {% set desired = states('sensor.vr7_selected_map_name') %}
@@ -327,12 +325,12 @@ sensor:
             {% endfor %}
           {% endif %}
 
-      vr7_selected_zone_uuid:
-        friendly_name: "VR7 zone UUID"
-        value_template: >-
+      - name: "VR7 selected zone uuid"
+        state: >-
           {% set zones_attr = state_attr('vacuum.roomba','zones') %}
           {% set zones = zones_attr if zones_attr is mapping else {} %}
-          {% set map_name = states('sensor.vr7_selected_map_name') %}
+          {% set zone_sel = states('input_select.vr7_zone') %}
+          {% set map_name = zone_sel.split(' | ', 1)[0] | trim if zone_sel and zone_sel != '—' and (' | ' in zone_sel) else '' %}
           {% set wanted = states('sensor.vr7_selected_zone_name') %}
           {% if map_name and wanted and map_name in zones %}
             {% set entries = zones[map_name] %}
