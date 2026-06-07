@@ -14,6 +14,7 @@ MOBILE_APP_OS_VERSION = "11"
 MOBILE_APP_USER_AGENT = "okhttp/5.1.0"
 MOBILE_APP_ACCEPT_ENCODING = "gzip"
 SIGNAL_ROBOT_BATTERY = "kobold_vr7_battery"
+SIGNAL_ROBOT_BAG = "kobold_vr7_bag"
 
 # Mercados soportados y el idioma asociado que necesitan las APIs
 DEFAULT_MARKET = "es"
