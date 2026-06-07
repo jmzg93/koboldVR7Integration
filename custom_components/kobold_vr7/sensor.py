@@ -18,7 +18,13 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.icon import icon_for_battery_level
 
 from .api.robots_api_client import RobotsApiClient
-from .const import CONF_ID_TOKEN, DOMAIN, ORBITAL_HOST, SIGNAL_ROBOT_BATTERY
+from .const import (
+    CONF_ID_TOKEN,
+    DOMAIN,
+    ORBITAL_HOST,
+    SIGNAL_ROBOT_BAG,
+    SIGNAL_ROBOT_BATTERY,
+)
 from .service.robot_service import RobotsService
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +54,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             estado_robot["robot"] = robot
             estado_robot.setdefault("battery_level", None)
             estado_robot.setdefault("is_charging", False)
+            estado_robot.setdefault("bag_status", None)
 
     sensores = []
     for robot_id, estado_robot in robots_state.items():
@@ -55,8 +62,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
         if robot is None:
             _LOGGER.debug("Omitiendo sensor de batería para robot %s sin datos", robot_id)
             continue
-        sensores.append(
-            KoboldBatterySensor(hass, robot, estado_robot)
+        sensores.extend(
+            (
+                KoboldBatterySensor(hass, robot, estado_robot),
+                KoboldBagStatusSensor(hass, robot, estado_robot),
+            )
         )
 
     if sensores:
@@ -139,6 +149,73 @@ class KoboldBatterySensor(SensorEntity):
         # Atributo adicional también en inglés para evitar traducciones
         # implícitas por parte de Home Assistant.
         return {"charging": self._is_charging}
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Enlaza el sensor con el dispositivo principal de la aspiradora."""
+        identificador = self._robot.serial or self._robot.id
+        fabricante = getattr(self._robot, 'vendor', None) or "Kobold"
+        return DeviceInfo(
+            identifiers={(DOMAIN, identificador)},
+            manufacturer=fabricante,
+            model=getattr(self._robot, 'model_name', None),
+            name=self._robot.name,
+            sw_version=getattr(self._robot, 'firmware', None),
+        )
+
+
+class KoboldBagStatusSensor(SensorEntity):
+    """Sensor de estado de la bolsa de la base de carga."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, hass, robot, estado_robot: dict[str, Any]):
+        """Inicializa el sensor de estado de la bolsa."""
+        self.hass = hass
+        self._robot = robot
+        self._robot_state = estado_robot
+        self._attr_unique_id = f"{robot.id}_bag_status"
+        self._attr_name = "Bag status"
+        self._attr_native_value = estado_robot.get("bag_status")
+        self._actualizar_icono()
+
+    async def async_added_to_hass(self):
+        """Se suscribe a las actualizaciones del estado de la bolsa."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_ROBOT_BAG}_{self._robot.id}",
+                self._procesar_actualizacion_bolsa,
+            )
+        )
+
+    def _procesar_actualizacion_bolsa(self, estado_bolsa: str | None):
+        """Programa una actualización segura para el hilo principal."""
+        self.hass.loop.call_soon_threadsafe(
+            self._actualizar_estado_desde_evento,
+            estado_bolsa,
+        )
+
+    @callback
+    def _actualizar_estado_desde_evento(self, estado_bolsa: str | None) -> None:
+        """Actualiza el estado de la bolsa en el bucle de eventos."""
+        self._robot_state["bag_status"] = estado_bolsa
+        self._attr_native_value = estado_bolsa
+        self._actualizar_icono()
+        self.async_write_ha_state()
+
+    def _actualizar_icono(self):
+        """Establece el icono según el estado conocido de la bolsa."""
+        estado = self._attr_native_value
+        if estado == "bag_ok":
+            self._attr_icon = "mdi:trash-can-outline"
+        elif estado:
+            self._attr_icon = "mdi:trash-can-alert-outline"
+        else:
+            self._attr_icon = "mdi:trash-can-outline"
 
     @property
     def device_info(self) -> DeviceInfo:

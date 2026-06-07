@@ -16,6 +16,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from ..const import (
     DOMAIN,
+    SIGNAL_ROBOT_BAG,
     SIGNAL_ROBOT_BATTERY,
     COMPANION_WS_URL,
     MOBILE_APP_ACCEPT_ENCODING,
@@ -557,9 +558,12 @@ class KoboldWebSocketClient:
         self.entity._attr_activity = ha_activity
         status_text = self._build_status_text(action, state)
 
-        # Guardar estado de la bolsa
-        if response_body.cleaning_center and response_body.cleaning_center.bag_status:
-            self.entity._attr_bag_status = response_body.cleaning_center.bag_status
+        bag_status = getattr(self.entity, "_attr_bag_status", None)
+        if response_body.cleaning_center:
+            new_bag_status = response_body.cleaning_center.bag_status
+            if new_bag_status:
+                bag_status = new_bag_status
+                self.entity._attr_bag_status = bag_status
 
         # Guardar available_commands si no es None
         if available_commands is not None:
@@ -602,12 +606,19 @@ class KoboldWebSocketClient:
         robot_state["robot"] = self.entity._robot
         robot_state["battery_level"] = battery_level
         robot_state["is_charging"] = is_charging
+        robot_state["bag_status"] = bag_status
 
         async_dispatcher_send(
             self.entity.hass,
             f"{SIGNAL_ROBOT_BATTERY}_{self.entity._robot.id}",
             battery_level,
             is_charging,
+        )
+
+        async_dispatcher_send(
+            self.entity.hass,
+            f"{SIGNAL_ROBOT_BAG}_{self.entity._robot.id}",
+            bag_status,
         )
 
         # Confirmar los cambios de estado a Home Assistant

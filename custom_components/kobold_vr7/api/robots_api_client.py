@@ -28,7 +28,7 @@ class RobotsApiClient:
     async def get_user_robots(self) -> List[RobotResponse]:
         url = f"{self._host}/users/me/robots"
         response = await self._make_request("GET", url)
-        return [RobotResponse(**robot) for robot in response]
+        return [RobotResponse.from_dict(robot) for robot in response]
 
     async def get_cleaning_modes(self, robot_id: str) -> CleaningModesResponse:
         url = f"{self._host}/robots/{robot_id}/features"

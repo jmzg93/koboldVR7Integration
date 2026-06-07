@@ -101,6 +101,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         robot_state["robot"] = robot
         robot_state.setdefault("battery_level", None)
         robot_state.setdefault("is_charging", False)
+        robot_state.setdefault("bag_status", None)
 
         entities.append(KoboldVacuumEntity(
             hass,
@@ -276,6 +277,10 @@ class KoboldVacuumEntity(StateVacuumEntity):
             attributes['ultimo_error'] = self._ultimo_error
         if self._errores_detallados:
             attributes['errores_detallados'] = self._errores_detallados
+
+        bag_status = getattr(self, "_attr_bag_status", None)
+        if bag_status:
+            attributes['bag_status'] = bag_status
 
         if self.map_with_zones_list:
             # 1) maps: map_id → map_name
