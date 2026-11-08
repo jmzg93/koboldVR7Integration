@@ -24,5 +24,16 @@
     "abort": {
       "already_configured": "This email is already configured."
     }
+  },
+  "exceptions": {
+    "cannot_start_cleaning": {
+      "message": "The robot cannot start cleaning right now."
+    },
+    "zones_missing": {
+      "message": "Some of the requested zones no longer exist in the Kobold app: {zones}. Update the area mapping of the vacuum."
+    },
+    "zones_multiple_maps": {
+      "message": "All zones must belong to the same robot map; the selected areas are spread across several maps."
+    }
   }
 }

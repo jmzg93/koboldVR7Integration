@@ -33,6 +33,7 @@ This integration allows Home Assistant users to control and monitor their Kobold
   - Adjust fan speed with modes (`auto`, `eco`, `turbo`).
 - **Zone and Map Cleaning**:
   - Start cleaning specific zones or entire maps.
+  - Clean one or more rooms by Home Assistant area (`vacuum.clean_area`).
 - **Monitoring**:
   - Robot state (cleaning, docked, idle, etc.).
   - Battery level.
@@ -44,7 +45,7 @@ This integration allows Home Assistant users to control and monitor their Kobold
 
 - An active Kobold account.
 - At least one Kobold vacuum robot configured via the official Kobold app.
-- A running Home Assistant instance.
+- A running Home Assistant instance (2026.3 or newer).
 
 ## Installation
 
@@ -90,11 +91,25 @@ Starts cleaning an entire map.
 - **Parameters**:
   - `map_uuid` (required): The UUID of the map to clean.
 
+
 ---
 
 ## Usage
 
 Once the integration is set up, entities corresponding to your Kobold robots will be added. You can interact with them via the Home Assistant dashboard or automations.
+
+### Cleaning by area
+
+The robot zones can be mapped to Home Assistant areas, so you can clean them with the standard `vacuum.clean_area` action.
+
+1. Open the vacuum entity, click the cog icon and choose **Map vacuum segments to areas**.
+2. Assign a Home Assistant area to each zone (zones are grouped by map name).
+3. Trigger the `vacuum.clean_area` action from UI or automation
+
+Notes:
+- All the zones of a request must belong to the same map.
+- No-go zones are not listed.
+- Zones created or removed in the Kobold app appear after reloading the integration.
 
 ### Additional Documentation
 
@@ -110,6 +125,7 @@ Once the integration is set up, entities corresponding to your Kobold robots wil
   - `vacuum.stop`: Stops cleaning.
   - `vacuum.return_to_base`: Sends the robot to its base.
   - `vacuum.locate`: Finds the robot.
+  - `vacuum.clean_area`: Cleans the Home Assistant areas mapped to the robot zones.
 - **Custom Services**:
   - `kobold_vr7.clean_zone`: Cleans a specific zone.
   - `kobold_vr7.clean_map`: Cleans an entire map.
