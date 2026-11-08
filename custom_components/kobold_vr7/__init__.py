@@ -11,7 +11,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["vacuum", "sensor"]
+PLATFORMS = ["vacuum", "sensor", "button"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Configura la integración desde una entrada de configuración."""

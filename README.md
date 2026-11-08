@@ -113,6 +113,8 @@ Once the integration is set up, entities corresponding to your Kobold robots wil
 - **Custom Services**:
   - `kobold_vr7.clean_zone`: Cleans a specific zone.
   - `kobold_vr7.clean_map`: Cleans an entire map.
+- **Buttons**:
+  - `button.<robot_name>_empty_dust_container`: Empties the robot's dust container.
 
 ---
 

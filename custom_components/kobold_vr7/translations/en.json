@@ -24,5 +24,13 @@
     "abort": {
       "already_configured": "This email is already configured."
     }
+  },
+  "exceptions": {
+    "extraction_not_available": {
+      "message": "The robot cannot empty its dust container right now."
+    },
+    "extraction_failed": {
+      "message": "The robot could not start emptying its dust container. Check the logs for details."
+    }
   }
 }
