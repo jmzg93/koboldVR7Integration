@@ -607,6 +607,8 @@ class KoboldWebSocketClient:
         robot_state["battery_level"] = battery_level
         robot_state["is_charging"] = is_charging
         robot_state["bag_status"] = bag_status
+        if available_commands is not None:
+            robot_state["available_commands"] = available_commands
 
         async_dispatcher_send(
             self.entity.hass,

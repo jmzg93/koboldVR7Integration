@@ -87,6 +87,10 @@ class RobotsApiClient:
     async def find_me(self, serial_robot_id: str) -> str:
         return await self._send_message_to_robot(serial_robot_id, "utilities.find_me")
 
+    async def start_extraction(self, serial_robot_id: str) -> str:
+        """Empty the robot dust container."""
+        return await self._send_message_to_robot(serial_robot_id, "extraction.start")
+
     async def _send_message_to_robot(self, robot_id: str, ability: str) -> Any:
         url = f"{self._host}/vendors/3/robots/{robot_id}/messages"
         payload = {"ability": ability}

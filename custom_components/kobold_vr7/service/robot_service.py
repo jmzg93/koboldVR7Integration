@@ -199,3 +199,10 @@ class RobotsService:
             "resume cleaning for robot %s",
             robot_id
         )
+
+    async def start_extraction(self, token, robot_id):
+        return await execute(
+            self.robots_api_client.start_extraction(robot_id),
+            "start extraction for robot %s",
+            robot_id
+        )

@@ -14,7 +14,8 @@
   "iot_class": "cloud_push",
   "platforms": [
     "vacuum",
-    "sensor"
+    "sensor",
+    "button"
   ],
   "config_flow": true,
   "homeassistant": "2025.5.0"
