@@ -2,12 +2,15 @@ import asyncio
 import logging
 from typing import Any
 from homeassistant.components.vacuum import (
+    Segment,
     StateVacuumEntity,
     VacuumEntityFeature,
     VacuumActivity,
 )
 
 import voluptuous as vol
+from homeassistant.core import callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -178,6 +181,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
             | VacuumEntityFeature.FAN_SPEED
             | VacuumEntityFeature.LOCATE
             | VacuumEntityFeature.MAP
+            | VacuumEntityFeature.CLEAN_AREA
         )
 
         # Por defecto, establecemos la actividad como IDLE
@@ -213,6 +217,7 @@ class KoboldVacuumEntity(StateVacuumEntity):
         """Se llama cuando la entidad ha sido agregada a hass."""
         # Llamar al método de la clase base
         await super().async_added_to_hass()
+        self._check_segments_changed()
         # Iniciar el cliente WebSocket
         self.hass.loop.create_task(self.websocket_service.start())
 
@@ -449,3 +454,64 @@ class KoboldVacuumEntity(StateVacuumEntity):
                 _LOGGER.warning(f"Map with UUID {map_uuid} not found.")
         else:
             _LOGGER.warning("Start command is not available for the robot.")
+
+    def _build_segments(self) -> list[Segment]:
+        """Convert the zones of every map into Home Assistant segments."""
+        segments = []
+        for mwz in self.map_with_zones_list:
+            if not mwz.zones:
+                continue
+            group = getattr(mwz.map, "name", None) or mwz.map.floorplan_uuid
+            for zone in mwz.zones:
+                # Skip no-go zones
+                if zone.type == "no-go":
+                    continue
+                name = getattr(zone, "name", None) or f"Zone {zone.track_uuid[:8]}"
+                segments.append(Segment(id=zone.track_uuid, name=name, group=group))
+        return segments
+
+    @callback
+    def _check_segments_changed(self) -> None:
+        """Raise a repair issue if the zones no longer match the mapped ones."""
+        last_seen = self.last_seen_segments
+        if last_seen is None:
+            return
+        # Avoid false alarms when the zones of a map could not be fetched
+        if any(mwz.zones is None for mwz in self.map_with_zones_list):
+            return
+        if {s.id for s in last_seen} != {s.id for s in self._build_segments()}:
+            self.async_create_segments_issue()
+
+    async def async_get_segments(self) -> list[Segment]:
+        """Return the cleanable zones."""
+        return self._build_segments()
+
+    async def async_clean_segments(self, segment_ids: list[str], **kwargs: Any) -> None:
+        """Clean the given zones."""
+        if not (self.available_commands and self.available_commands.start):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="cannot_start_cleaning"
+            )
+
+        wanted = set(segment_ids)
+        found_ids: set[str] = set()  # requested zones that exist
+        map_ids: set[str] = set()  # maps those zones belong to
+        for mwz in self.map_with_zones_list:
+            for zone in mwz.zones or []:
+                if zone.track_uuid in wanted:
+                    found_ids.add(zone.track_uuid)
+                    map_ids.add(mwz.map.floorplan_uuid)
+
+        missing = wanted - found_ids
+        if missing:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="zones_missing",
+                translation_placeholders={"zones": ", ".join(sorted(missing))},
+            )
+        if len(map_ids) > 1:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="zones_multiple_maps"
+            )
+
+        await self.async_clean_zone(",".join(segment_ids))
